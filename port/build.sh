@@ -111,6 +111,10 @@ if [[ ${1:-} == --test ]]; then
     out/pad-map-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror tests/test_mouse_stick.c -lm -o out/mouse-stick-test
     out/mouse-stick-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -UNDEBUG tests/test_gyro_aim.c -lm -o out/gyro-aim-test
+    out/gyro-aim-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -UNDEBUG -pthread "${includes[@]}" -I. -Isrc tests/test_gyro_pad.c "${libraries[@]}" -lm -o out/gyro-pad-test
+    out/gyro-pad-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -UNDEBUG tests/test_mouse_touch.c -Isrc -lm -o out/mouse-touch-test
     out/mouse-touch-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -UNDEBUG -pthread "${includes[@]}" -I. -Isrc tests/test_mouse_pad.c "${libraries[@]}" -lm -o out/mouse-pad-test

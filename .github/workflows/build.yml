@@ -59,6 +59,13 @@ jobs:
           bash packaging/linux/build_deps.sh
       - name: Build
         run: TLG_LTO=ON TLG_PGO=off bash build.sh
+      - name: Gyro aim tests
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -UNDEBUG tests/test_gyro_aim.c -lm -o out/gyro-aim-test
+          out/gyro-aim-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -UNDEBUG -pthread -I. -Isrc $(pkg-config --cflags sdl3) tests/test_gyro_pad.c $(pkg-config --libs sdl3) -lm -o out/gyro-pad-test
+          out/gyro-pad-test
       - name: Package
         run: bash packaging/linux/package.sh
       - name: Smoke test (frozen Qt launcher)
@@ -114,6 +121,11 @@ jobs:
         run: |
           export MSYS2_ROOT=$(cygpath -u "$MSYS2_ROOT")
           TLG_LTO=ON bash build.sh
+      - name: Gyro aim tests
+        run: |
+          cmake --build out/gpu --target gyro-aim-test gyro-pad-test
+          out/gpu/gyro-aim-test.exe
+          out/gpu/gyro-pad-test.exe
       - name: Package
         env:
           MSYS2_ROOT: ${{ runner.temp }}/msys64

@@ -95,6 +95,8 @@ typedef struct {
     int32_t mouse_enabled, invert_y;
     float sensitivity, smoothing, accel, deadzone;
     char key_map[512];
+    int32_t gyro_aim, gyro_invert_y, gyro_focused;
+    float gyro_sensitivity, gyro_smoothing, gyro_noise, gyro_deadzone;
 } TlgGpuInputSettings;
 void tlggpu_input_settings(TlgGpuInputSettings *settings);
 /* Touchpad mode of the mouse (runtime_pad.c): while active, a small touchpad with the virtual
