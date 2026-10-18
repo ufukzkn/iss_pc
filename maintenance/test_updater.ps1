@@ -100,7 +100,37 @@ try {
         $badZip = ZipPayload $ok $extra
         MustFail { Expand-VerifiedPackage $badZip (Get-Hash $badZip) (Join-Path $testRoot ([guid]::NewGuid().ToString('N'))) } "Bad ZIP accepted: $extra"
     }
-    Write-Host 'Updater tests passed: preservation, backup, rollback, open-game refusal, checksum and ZIP validation.'
+    # The launcher prepares while open; installation happens only in the separate applying phase.
+    $two=Fixture 'two-phase'
+    $InstallDir=$two.Target
+    $PackageZip=ZipPayload $two
+    $ExpectedSha256=Get-Hash $PackageZip
+    $PrepareOnly=$true
+    $PreparedPlan=Join-Path $two.Folder 'prepared.json'
+    Invoke-InfamousUpdate | Out-Null
+    Assert ((Get-Content -LiteralPath (Join-Path $two.Target 'out/tlg-probe.exe') -Raw) -eq 'old-game') 'Prepare changed the live program'
+    $plan=Get-Content -LiteralPath $PreparedPlan -Raw | ConvertFrom-Json
+    Assert (Test-Path -LiteralPath $plan.payload) 'Prepared payload missing'
+    $PrepareOnly=$false
+    $ResultFile=Join-Path $two.Folder 'result.json'
+    Invoke-PreparedUpdate $PreparedPlan | Out-Null
+    Assert ((Get-Content -LiteralPath (Join-Path $two.Target 'out/tlg-probe.exe') -Raw) -eq 'new-game') 'Apply did not install'
+    Assert (-not (Test-Path -LiteralPath $plan.stage)) 'Prepared stage was not cleaned'
+    Assert ((Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json).status -eq 'success') 'Result handoff missing'
+
+    $tampered=Fixture 'tampered-plan'
+    $InstallDir=$tampered.Target
+    $PackageZip=ZipPayload $tampered
+    $ExpectedSha256=Get-Hash $PackageZip
+    $PrepareOnly=$true
+    $PreparedPlan=Join-Path $tampered.Folder 'prepared.json'
+    Invoke-InfamousUpdate | Out-Null
+    $plan=Get-Content -LiteralPath $PreparedPlan -Raw | ConvertFrom-Json
+    Put $plan.payload 'out/tlg-probe.exe' 'tampered'
+    $PrepareOnly=$false
+    MustFail { Invoke-PreparedUpdate $PreparedPlan } 'Tampered prepared payload accepted'
+    Assert ((Get-Content -LiteralPath (Join-Path $tampered.Target 'out/tlg-probe.exe') -Raw) -eq 'old-game') 'Tampered payload changed the install'
+    Write-Host 'Updater tests passed: preservation, backup, rollback, process gate, archive validation and two-phase handoff.'
 } finally {
     $env:APPDATA = $oldAppdata
     $resolved = [IO.Path]::GetFullPath($testRoot)

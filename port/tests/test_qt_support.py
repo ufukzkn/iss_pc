@@ -400,12 +400,12 @@ class FetchTests(unittest.TestCase):
 
     def test_one_get_with_user_agent_and_timeout_and_no_data(self):
         release = {'tag_name': 'v2026.10.15-61e8942', 'name': 'v2026.10.15', 'body': CI_BODY, 'published_at': '2026-10-15T10:00:00Z',
-                   'html_url': 'https://github.com/HayatoG/iss_pc/releases/tag/v2026.10.15-61e8942'}
+                   'html_url': releases.RELEASE_PREFIX + 'tag/v2026.10.15-61e8942'}
         opener = self.opener(release)
         got = releases.fetch_latest('v2026.10.13-3f2a9c1', opener=opener)
         self.assertEqual(len(opener.calls), 1)
         request, timeout = opener.calls[0]
-        self.assertEqual(request.full_url, 'https://api.github.com/repos/HayatoG/iss_pc/releases/latest')
+        self.assertEqual(request.full_url, releases.API_URL)
         self.assertEqual(request.get_method(), 'GET')
         self.assertIsNone(request.data)
         self.assertEqual(timeout, 10)
@@ -468,7 +468,7 @@ class ControllerTests(unittest.TestCase):
         self.logs.mkdir()
         (self.logs / 'run-1.log').write_text(LOG + 'C:\\Users\\Maria Silva\\x\n', encoding='utf-8')
         self.opened, self.copied, self.saved = [], [], []
-        self.release = {'tag': 'v2026.10.15-61e8942', 'url': 'https://github.com/HayatoG/iss_pc/releases/tag/v2026.10.15-61e8942',
+        self.release = {'tag': 'v2026.10.15-61e8942', 'url': releases.RELEASE_PREFIX + 'tag/v2026.10.15-61e8942',
                         'body': CI_BODY, 'published': '2026-10-15'}
         self.fetch_calls = []
 
@@ -610,6 +610,48 @@ class ControllerTests(unittest.TestCase):
         self.pump(lambda: not self.updates.checking)
         self.updates.download()
         self.assertEqual(self.opened[-1], self.release['url'])
+
+    def test_install_prepares_before_handoff_and_blocks_play(self):
+        events = []
+        def prepare(root, progress):
+            events.append('prepare')
+            progress('verify')
+            return {'version': self.release['tag']}
+        self.updates.probes.update(prepare_install=prepare,
+                                   apply_install=lambda data: events.append('apply'),
+                                   quit_install=lambda: events.append('quit'))
+        self.updates.check()
+        self.pump(lambda: not self.updates.checking)
+        self.assertTrue(self.updates.canInstall)
+        self.updates.install()
+        self.assertTrue(self.updates.installing)
+        self.assertFalse(self.backend.canPlay)
+        self.pump(lambda: 'quit' in events)
+        self.assertEqual(events, ['prepare', 'apply', 'quit'])
+
+    def test_failed_preparation_keeps_launcher_open_and_allows_retry(self):
+        events=[]
+        def fail(root, progress):
+            raise RuntimeError('fixture checksum mismatch')
+        self.updates.probes.update(prepare_install=fail, apply_install=lambda data: events.append('apply'),
+                                   quit_install=lambda: events.append('quit'))
+        self.updates.check()
+        self.pump(lambda: not self.updates.checking)
+        self.updates.install()
+        self.pump(lambda: not self.updates.installing)
+        self.assertEqual(events, [])
+        self.assertIn('fixture checksum mismatch', self.updates.statusText)
+        self.assertTrue(self.updates.canInstall)
+
+    def test_install_is_disabled_while_game_is_running(self):
+        self.updates.probes['prepare_install'] = lambda root, progress: self.fail('must not prepare')
+        self.updates.check()
+        self.pump(lambda: not self.updates.checking)
+        self.backend._play_state='running'
+        self.assertFalse(self.updates.canInstall)
+        self.assertIn('Close the game', self.updates.statusText)
+        self.updates.install()
+        self.assertFalse(self.updates.installing)
 
     def test_check_on_open_setting_is_saved_and_start_probes_honours_it(self):
         self.updates.setCheckOnOpen(True)

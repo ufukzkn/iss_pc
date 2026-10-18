@@ -88,10 +88,18 @@ jobs:
         shell: pwsh
         working-directory: .
         run: |
+          python -m pip install --disable-pip-version-check PySide6-Essentials
+          if ($LASTEXITCODE) { throw 'Qt test dependencies failed' }
           python maintenance/verify_features.py
           if ($LASTEXITCODE) { throw 'Essential feature check failed' }
           python -m unittest discover -s port/tests -p test_content.py -v
           if ($LASTEXITCODE) { throw 'DLC profile tests failed' }
+          python maintenance/test_prepare_fork.py
+          if ($LASTEXITCODE) { throw 'Upstream merge routing test failed' }
+          python -m unittest discover -s port/tests -p test_qt_support.py -v
+          if ($LASTEXITCODE) { throw 'Release/controller tests failed' }
+          python -m unittest discover -s port/tests -p test_qt_screens_a.py -v
+          if ($LASTEXITCODE) { throw 'Controls/settings tests failed' }
           powershell.exe -NoProfile -File maintenance/test_updater.ps1
           if ($LASTEXITCODE) { throw 'Updater tests failed' }
       - uses: msys2/setup-msys2@v2
@@ -126,6 +134,9 @@ jobs:
           code=$?
           set -e
           test "$code" = 21
+          cmake --build out/gpu --target gyro-aim-test gyro-pad-test
+          out/gpu/gyro-aim-test.exe
+          out/gpu/gyro-pad-test.exe
       - name: Package
         env:
           MSYS2_ROOT: ${{ runner.temp }}/msys64
@@ -167,7 +178,7 @@ jobs:
           Credits: HayatoG and upstream contributors; BeastBoyyy for the DLC implementation. Original licenses and commit authorship are preserved.
 
           No game files, DLC packages, firmware, player saves or personal settings are included.
-          Use Update-inFAMOUS.cmd to update an existing installation with a backup. A merge or test failure does not replace the previous published release.
+          Includes L2-held gyro aiming (off by default) and Updates > Fetch and install in the Qt launcher. The launcher verifies and backs up before restarting to finish the update. Update-inFAMOUS.cmd remains available as a fallback. A merge or test failure does not replace the previous published release.
           "@
           $notes | Set-Content release-notes.md -Encoding utf8
           $existing = gh release view $info.version --json isDraft 2>$null

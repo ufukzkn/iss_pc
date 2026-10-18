@@ -4,10 +4,22 @@ param(
     [string]$InstallDir,
     [switch]$CheckOnly,
     [string]$PackageZip,
-    [string]$ExpectedSha256
+    [string]$ExpectedSha256,
+    [switch]$PrepareOnly,
+    [string]$PreparedPlan,
+    [string]$ApplyPrepared,
+    [int]$WaitForProcessId,
+    [string]$ResultFile,
+    [switch]$RestartLauncher
 )
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $script:ForkRepo = 'ufukzkn/iss_pc'
+$script:PreparingUpdate = $false
+
+function Write-UpdatePhase([string]$Phase, [string]$Message='') {
+    Write-Output ('ISS_UPDATE:' + (@{phase=$Phase; message=$Message} | ConvertTo-Json -Compress))
+}
 
 function Get-ChildPath([string]$Root, [string]$Relative) {
     $parts = $Relative.Replace('\','/').Split('/')
@@ -37,7 +49,8 @@ function Assert-NoLinks([string]$Root, [string]$Relative) {
 
 function Assert-GameClosed {
     $running = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-        $_.Name -in @('tlg-probe.exe','inFAMOUS Second Son.exe','inFAMOUS Second Son (classic).exe','Play inFAMOUS Second Son.exe')
+        $_.Name -in @('tlg-probe.exe','Play inFAMOUS Second Son.exe') -or
+        (-not $script:PreparingUpdate -and $_.Name -in @('inFAMOUS Second Son.exe','inFAMOUS Second Son (classic).exe'))
     })
     if ($running.Count) { throw 'Save your game and close the game and both launchers, then run this updater again.' }
 }
@@ -70,6 +83,10 @@ function Expand-VerifiedPackage([string]$Zip, [string]$Sha256, [string]$Destinat
     } finally { $archive.Dispose() }
     [IO.Compression.ZipFile]::ExtractToDirectory($Zip, $Destination)
     $payload = Join-Path $Destination 'infamous-windows-x86_64'
+    return Read-VerifiedPayload $payload
+}
+
+function Read-VerifiedPayload([string]$payload) {
     $manifest = Get-Content -LiteralPath (Join-Path $payload 'FORK-BUILD.json') -Raw | ConvertFrom-Json
     if ($manifest.schema -ne 1 -or $manifest.repository -ne $script:ForkRepo -or
         $manifest.features -notcontains 'dlc-unlockers' -or $manifest.features -notcontains 'fps-menu-labels' -or
@@ -202,6 +219,8 @@ function Install-VerifiedPayload([string]$Payload, [string]$Target, [string]$Bac
 }
 
 function Invoke-InfamousUpdate {
+    $script:PreparingUpdate = [bool]$PrepareOnly
+    if ($PrepareOnly -and -not $PreparedPlan) { throw 'PrepareOnly requires a plan output path' }
     if (-not $InstallDir) {
         if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'out\tlg-probe.exe')) { $InstallDir=$PSScriptRoot }
         else { $InstallDir=Join-Path $PSScriptRoot 'infamous-windows-x86_64' }
@@ -235,8 +254,14 @@ function Invoke-InfamousUpdate {
     $suffix = [guid]::NewGuid().ToString('N').Substring(0,8)
     $stage = Join-Path $parent ('.iss-update-stage-' + $stamp + '-' + $suffix)
     $backup = Join-Path $parent ('infamous-update-backups\' + $stamp + '-' + $suffix)
+    $keepStage = $false
     try {
         $null = New-Item -ItemType Directory -Path $stage
+        if ($PrepareOnly -and $PackageZip) {
+            $preparedZip=Join-Path $stage 'infamous-windows-x86_64.zip'
+            Copy-Item -LiteralPath $PackageZip -Destination $preparedZip
+            $PackageZip=$preparedZip
+        }
         if (-not $PackageZip) {
             $assetName = 'infamous-windows-x86_64.zip'
             $zipAsset = @($latest.assets | Where-Object name -eq $assetName)
@@ -250,18 +275,34 @@ function Invoke-InfamousUpdate {
             Invoke-WebRequest -UseBasicParsing -Uri $hashAsset[0].browser_download_url -OutFile $hashFile
             $ExpectedSha256 = ((Get-Content -LiteralPath $hashFile -Raw).Trim() -split '\s+')[0]
             Write-Host 'Downloading verified fork package...'
+            Write-UpdatePhase 'download'
             Invoke-WebRequest -UseBasicParsing -Uri $zipAsset[0].browser_download_url -OutFile $PackageZip
         }
+        Write-UpdatePhase 'verify'
         $verified = Expand-VerifiedPackage $PackageZip $ExpectedSha256 (Join-Path $stage 'payload')
         if ($latest -and $verified.Manifest.version -ne $latest.tag_name) { throw 'Release version and package version disagree' }
+        Write-UpdatePhase 'selftest'
         Invoke-LauncherSelfTest $verified.Root (Join-Path $stage 'staged-selftest.txt')
+        if ($PrepareOnly) {
+            Assert-GameClosed
+            if ($WaitForProcessId -gt 0 -and -not (Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue)) {
+                throw 'The launcher closed; prepared update cancelled'
+            }
+            @{schema=1; target=$InstallDir; stage=$stage; payload=$verified.Root; zip=$PackageZip;
+              sha256=$ExpectedSha256; version=$verified.Manifest.version; backup=$backup} |
+                ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $PreparedPlan -Encoding UTF8
+            $keepStage=$true
+            Write-UpdatePhase 'ready'
+            return
+        }
+        Write-UpdatePhase 'install'
         $count = Install-VerifiedPayload $verified.Root $InstallDir $backup $stage
         Write-Host ('Updated to ' + $verified.Manifest.version + ' (' + $count + ' files).')
         Write-Host ('Saves/settings backup and previous program files: ' + $backup)
         Write-Host 'Open your usual launcher and press Play.'
     } finally {
         # Only this invocation's literal, verified stage directory can be removed recursively.
-        if ((Split-Path -Parent ([IO.Path]::GetFullPath($stage))) -eq $parent -and
+        if (-not $keepStage -and (Split-Path -Parent ([IO.Path]::GetFullPath($stage))) -eq $parent -and
             (Split-Path -Leaf $stage) -like '.iss-update-stage-*' -and (Test-Path -LiteralPath $stage)) {
             Remove-Item -LiteralPath $stage -Recurse -Force
         }
@@ -270,4 +311,73 @@ function Invoke-InfamousUpdate {
     }
 }
 
-if ($MyInvocation.InvocationName -ne '.') { Invoke-InfamousUpdate }
+function Invoke-PreparedUpdate([string]$PlanPath) {
+    $script:PreparingUpdate=$false
+    $plan=Get-Content -LiteralPath $PlanPath -Raw | ConvertFrom-Json
+    if ($plan.schema -ne 1) { throw 'Unsupported update plan' }
+    $target=[IO.Path]::GetFullPath($plan.target).TrimEnd('\','/')
+    $parent=Split-Path -Parent $target
+    $stage=[IO.Path]::GetFullPath($plan.stage).TrimEnd('\','/')
+    if ((Split-Path -Parent $stage) -ne $parent -or (Split-Path -Leaf $stage) -notlike '.iss-update-stage-*' -or
+        $plan.payload -ne (Join-Path $stage 'payload\infamous-windows-x86_64') -or
+        $plan.zip -ne (Join-Path $stage 'infamous-windows-x86_64.zip') -or
+        (Split-Path -Parent $plan.backup) -ne (Join-Path $parent 'infamous-update-backups') -or
+        -not (Test-Path -LiteralPath (Join-Path $target 'inFAMOUS Second Son.exe'))) { throw 'Invalid update plan paths' }
+    Assert-NoLinks $parent (Split-Path -Leaf $stage)
+    if ($WaitForProcessId -gt 0) {
+        Write-UpdatePhase 'waiting'
+        $process=Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue
+        if ($process -and -not $process.WaitForExit(60000)) { throw 'Launcher did not exit; installation has not started' }
+    }
+    # A frozen launcher has a short-lived bootloader parent, which can exit just after Python.
+    $closed=$false
+    for ($i=0; $i -lt 30; $i++) {
+        try { Assert-GameClosed; $closed=$true; break } catch { Start-Sleep -Milliseconds 200 }
+    }
+    if (-not $closed) { throw 'Close all game and launcher windows; installation has not started' }
+    $mutexName='Local\iss-pc-update-' + ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($target.ToLowerInvariant())))).Replace('-','')
+    $mutex=New-Object Threading.Mutex($false,$mutexName)
+    $acquired=$mutex.WaitOne(0)
+    if (-not $acquired) { $mutex.Dispose(); throw 'Another update is already running' }
+    try {
+        Write-UpdatePhase 'verify'
+        if ((Get-Hash $plan.zip) -ne $plan.sha256) { throw 'Prepared archive changed; installation has not started' }
+        $verified=Read-VerifiedPayload $plan.payload
+        if ($verified.Manifest.version -ne $plan.version) { throw 'Prepared version changed' }
+        Write-UpdatePhase 'install'
+        $count=Install-VerifiedPayload $verified.Root $target $plan.backup $stage
+        if ($ResultFile) {
+            @{status='success'; version=$plan.version; backup=$plan.backup; files=$count} |
+                ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8
+        }
+        Write-UpdatePhase 'done'
+    } finally {
+        $mutex.ReleaseMutex(); $mutex.Dispose()
+        # The applying script lives in TEMP, outside both the live install and this owned stage.
+        if ((Split-Path -Parent $stage) -eq $parent -and (Split-Path -Leaf $stage) -like '.iss-update-stage-*' -and
+            (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    }
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false)
+    $exitCode=0
+    try {
+        if ($ApplyPrepared) { Invoke-PreparedUpdate $ApplyPrepared }
+        else { Invoke-InfamousUpdate }
+    } catch {
+        $exitCode=1
+        if ($ResultFile) {
+            @{status='error'; message=$_.Exception.Message} | ConvertTo-Json |
+                Set-Content -LiteralPath $ResultFile -Encoding UTF8
+        }
+        Write-UpdatePhase 'error' $_.Exception.Message
+        Write-Error $_ -ErrorAction Continue
+    }
+    if ($ApplyPrepared -and $RestartLauncher) {
+        $plan=Get-Content -LiteralPath $ApplyPrepared -Raw | ConvertFrom-Json
+        if ($ResultFile) { $env:ISS_UPDATE_RESULT_FILE=$ResultFile }
+        Start-Process -FilePath (Join-Path $plan.target 'inFAMOUS Second Son.exe') -WorkingDirectory $plan.target
+    }
+    exit $exitCode
+}

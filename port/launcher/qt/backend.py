@@ -385,7 +385,7 @@ class Backend(QObject):
 
     @Property(bool, notify=stateChanged)
     def canPlay(self):
-        return self._ready and self._play_state == 'idle'
+        return self._ready and self._play_state == 'idle' and not self.updates.installing
 
     @Property(str, notify=stateChanged)
     def playState(self):
@@ -445,7 +445,7 @@ class Backend(QObject):
     # -- play (same path as the Tk launcher: prepare() then launch()) -------------------------------
     @Slot()
     def play(self):
-        if self._play_state != 'idle' or not self._ready:
+        if self._play_state != 'idle' or not self._ready or self.updates.installing:
             return
         tlg_run.save_settings(self.settings)
         if backports_table.notice_pending(self.settings):

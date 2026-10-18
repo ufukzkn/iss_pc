@@ -8,6 +8,8 @@ checks = {
     'port/src/probe.c': ('G3CONT02', 'runtime_content_set_addons'),
     'port/src/runtime_content.c': ('runtime_content_set_addons',),
     'port/launcher/infamous_run.py': ('ISS_ADDCONT_DIR',),
+    'port/src/runtime_pad.c': ('sample_gyro_aim',),
+    'port/launcher/qt/updates.py': ('canInstall', 'installer.handoff'),
 }
 for name, tokens in checks.items():
     source = (root / name).read_text(encoding='utf-8')

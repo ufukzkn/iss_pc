@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""The QObject behind the Updates screen. One HTTPS GET to the GitHub releases API when the player
-clicks "Check for updates" (or opens the launcher with the option on, off by default); it sends no
-data of the player. Nothing is downloaded or installed: "Download" opens the release page."""
+"""Manual release checks and a verified two-phase Windows installation from the Qt UI."""
 import datetime
 import threading
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-from . import releases, report
+from . import releases, report, installer
 from .logic import tlg_run
 
 
 class Updates(QObject):
     changed = Signal()
     fetched = Signal(object)
+    prepared = Signal(object)
+    installProgress = Signal(str)
 
     def __init__(self, backend, probes=None):
         """probes (tests, screenshots): 'fetch' -> f(version) returning the release dict or raising
@@ -23,9 +23,15 @@ class Updates(QObject):
         self.probes = probes or {}
         self._checking = False
         self._error = ''
+        self._installing = False
+        self._phase = ''
+        self._notice = installer.read_notice()
         seen = backend.settings.get('update_seen')
         self.release = dict(seen) if isinstance(seen, dict) and seen.get('tag') else None
         self.fetched.connect(self._on_fetched)
+        self.prepared.connect(self._on_prepared)
+        self.installProgress.connect(self._on_install_progress)
+        backend.stateChanged.connect(self.changed)
 
     def t(self, key, **fmt):
         return self.backend.t_(key, **fmt)
@@ -63,15 +69,32 @@ class Updates(QObject):
         return self._checking
 
     @Property(bool, notify=changed)
+    def installing(self):
+        return self._installing
+
+    @Property(bool, notify=changed)
+    def canInstall(self):
+        supported = 'prepare_install' in self.probes or installer.supported(tlg_run.PORT_DIR)
+        return supported and self.available and not self._checking and not self._installing and self.backend._play_state == 'idle'
+
+    @Property(bool, notify=changed)
     def canDownload(self):
         return True     # without a known release it opens the releases page
 
     @Property(str, notify=changed)
     def statusText(self):
+        if self._installing:
+            key = {'download': 'upd_downloading', 'verify': 'upd_verifying', 'selftest': 'upd_testing',
+                   'ready': 'upd_restarting'}.get(self._phase, 'upd_preparing_install')
+            return self.t(key)
         if self._checking:
             return self.t('upd_checking')
         if self._error:
             return self._error
+        if self._notice:
+            return self.t('upd_install_done') if self._notice['status'] == 'success' else self.t('upd_install_failed', detail=self._notice.get('message', ''))
+        if self.available and self.backend._play_state != 'idle':
+            return self.t('upd_close_game')
         status = self.status()
         tag = self.latest
         if status == 'none':
@@ -82,6 +105,8 @@ class Updates(QObject):
     def tone(self):
         if self._error:
             return 'bad'
+        if self._notice:
+            return 'bad' if self._notice['status'] == 'error' else 'good'
         return {'newer': 'warn', 'different': 'warn', 'same': 'good'}.get(self.status(), 'info') \
             if not self._checking else 'info'
 
@@ -111,7 +136,7 @@ class Updates(QObject):
     # -- the check -----------------------------------------------------------------------------------
     @Slot()
     def check(self):
-        if self._checking:
+        if self._checking or self._installing:
             return
         self._checking, self._error = True, ''
         self.changed.emit()
@@ -123,9 +148,48 @@ class Updates(QObject):
                 self.fetched.emit(fetch(version))
             except releases.UpdateError as error:
                 self.fetched.emit(error)
-            except Exception as error:    # never let a surprise leave the screen stuck on "checking"
+            except Exception as error:
                 self.fetched.emit(releases.UpdateError('http', str(error)))
         threading.Thread(target=work, daemon=True).start()
+
+    def _on_install_progress(self, phase):
+        self._phase = phase
+        self.changed.emit()
+
+    @Slot()
+    def install(self):
+        if not self.canInstall:
+            return
+        self._installing, self._error, self._phase = True, '', 'prepare'
+        self._notice = None
+        self.changed.emit()
+        self.backend.stateChanged.emit()
+
+        def work():
+            prepare = self.probes.get('prepare_install') or installer.prepare
+            try:
+                self.prepared.emit(prepare(tlg_run.PORT_DIR, self.installProgress.emit))
+            except Exception as error:
+                self.prepared.emit(error)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_prepared(self, result):
+        if isinstance(result, Exception):
+            self._installing = False
+            self._error = self.t('upd_install_failed', detail=str(result))
+            self.changed.emit()
+            self.backend.stateChanged.emit()
+            return
+        try:
+            apply = self.probes.get('apply_install') or installer.handoff
+            apply(result)
+        except Exception as error:
+            self._on_prepared(error)
+            return
+        self._phase = 'ready'
+        self.changed.emit()
+        quit_app = self.probes.get('quit_install') or self.backend._quit_app
+        quit_app()
 
     def _on_fetched(self, result):
         self._checking = False

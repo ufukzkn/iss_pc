@@ -32,7 +32,9 @@ def merge_release(base, target):
     Merge source changes normally and fail on source conflicts; only the workflow directory
     is deliberately kept from our base. No extra workflow-write PAT is needed.
     """
-    result = subprocess.run(['git', 'merge', '--no-edit', '--no-ff', '--no-commit', target])
+    result = subprocess.run(['git', '-c', 'user.name=iss_pc fork automation',
+                             '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+                             'merge', '--no-edit', '--no-ff', '--no-commit', target])
     pending = subprocess.run(['git', 'rev-parse', '--verify', 'MERGE_HEAD'], capture_output=True).returncode == 0
     if not pending:
         if result.returncode:
