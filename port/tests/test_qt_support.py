@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from paths import ROOT
 sys.path.insert(0, str(ROOT / 'launcher'))
-from qt import logic, releases, report  # noqa: E402
+from qt import logic, releases, report, installer  # noqa: E402
 
 try:
     from qt.backend import Backend
@@ -27,6 +28,27 @@ except ImportError:
 
 STRINGS = json.loads((ROOT / 'launcher' / 'qt' / 'i18n' / 'strings.json').read_text(encoding='utf-8'))
 T = logic.Translator({'ui_language': 'en_US'}, STRINGS, {})
+
+
+class UpdateWorkerTests(unittest.TestCase):
+    def test_child_environment_is_independent_without_changing_parent(self):
+        with mock.patch.dict(os.environ, {'PSMODULEPATH': 'fixture-incompatible-ps7', 'ISS_TEST': 'kept'}):
+            result = installer.worker_environment()
+            self.assertNotIn('PSMODULEPATH', {key.upper() for key in result})
+            self.assertEqual(result['PYINSTALLER_RESET_ENVIRONMENT'], '1')
+            self.assertEqual(result['ISS_TEST'], 'kept')
+            self.assertEqual(os.environ['PSMODULEPATH'], 'fixture-incompatible-ps7')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell regression')
+    def test_system_powershell_can_load_hash_command_from_python(self):
+        with mock.patch.dict(os.environ, {'PSMODULEPATH': str(Path(os.environ['SystemRoot']) / 'missing-ps7-modules')}):
+            child = installer.start_worker([installer.powershell(), '-NoProfile', '-Command',
+                '$ErrorActionPreference="Stop"; Get-Command Get-FileHash | Out-Null; Write-Output "hash-command-ok"'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            out, err = child.communicate(timeout=20)
+            self.assertEqual(child.returncode, 0, err)
+            self.assertIn('hash-command-ok', out)
 
 
 class RedactionTests(unittest.TestCase):

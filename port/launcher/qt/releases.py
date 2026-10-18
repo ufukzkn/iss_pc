@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Release check, no Qt: version names, comparison, the notes in the player's language and the one
-HTTPS GET the Updates screen makes. The launcher never downloads or installs anything."""
+HTTPS GET the Updates screen makes. Package installation lives in installer.py."""
 import json
 import re
 import socket

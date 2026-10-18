@@ -6,6 +6,7 @@ selftest, copy the applying script outside the install, start it waiting for thi
 then let Qt exit normally. The hidden worker applies/rolls back and reopens the launcher.
 """
 import json
+import ctypes
 import os
 from pathlib import Path
 import shutil
@@ -20,6 +21,30 @@ def supported(root):
 
 def powershell():
     return str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe')
+
+def worker_environment():
+    # PS7 -> Python -> Windows PowerShell otherwise inherits incompatible PS7 modules.
+    env = {key: value for key, value in os.environ.items() if key.upper() != 'PSMODULEPATH'}
+    # The worker eventually starts an independent instance of the frozen launcher.
+    env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+    bundle = getattr(sys, '_MEIPASS', '')
+    if bundle:
+        bundle = os.path.normcase(os.path.abspath(bundle))
+        env['PATH'] = os.pathsep.join(part for part in env.get('PATH', '').split(os.pathsep)
+            if part and not os.path.normcase(os.path.abspath(part)).startswith(bundle + os.sep)
+            and os.path.normcase(os.path.abspath(part)) != bundle)
+    return env
+
+def start_worker(command, **kwargs):
+    """System PowerShell must not inherit PyInstaller's bundled DLL search directory."""
+    frozen = os.name == 'nt' and getattr(sys, 'frozen', False)
+    if frozen:
+        ctypes.windll.kernel32.SetDllDirectoryW(None)
+    try:
+        return subprocess.Popen(command, env=worker_environment(), **kwargs)
+    finally:
+        if frozen:
+            ctypes.windll.kernel32.SetDllDirectoryW(str(sys._MEIPASS))
 
 def read_notice():
     name = os.environ.pop('ISS_UPDATE_RESULT_FILE', '')
@@ -42,7 +67,7 @@ def prepare(root, progress, owner_pid=None):
     last_error = ''
     log = session / 'prepare.log'
     with log.open('w', encoding='utf-8') as output:
-        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        child = start_worker(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL, text=True, encoding='utf-8', errors='replace',
                                  creationflags=subprocess.CREATE_NO_WINDOW)
         for line in child.stdout:
@@ -67,6 +92,6 @@ def handoff(prepared, parent_pid=None, restart=True):
     if restart:
         command.append('-RestartLauncher')
     with (session / 'install.log').open('wb') as output:
-        child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+        child = start_worker(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                  close_fds=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
     return child.pid
