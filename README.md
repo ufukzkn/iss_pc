@@ -1,3 +1,5 @@
+> **Unofficial DLC Windows fork:** [fork releases](https://github.com/ufukzkn/iss_pc/releases/latest) include BeastBoyyy's DLC support and a backup-based updater. [Fork details, credits and update instructions](FORK-README.md). The native port is by HayatoG and upstream contributors.
+
 <p align="center"><img src="port/packaging/icon/infamous-icon-1024.png" width="160" alt=""></p>
 
 <h1 align="center">inFAMOUS Second Son — port nativo para PC</h1>

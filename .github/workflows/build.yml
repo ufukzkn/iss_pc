@@ -22,6 +22,7 @@ permissions:
 
 jobs:
   linux:
+    if: github.repository == 'HayatoG/iss_pc'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -78,6 +79,7 @@ jobs:
           retention-days: 3
 
   windows:
+    if: github.repository == 'HayatoG/iss_pc'
     runs-on: windows-latest
     defaults:
       run:
@@ -151,7 +153,7 @@ jobs:
   release:
     needs: [linux, windows]
     # Only pushes publish (main -> vYYYY.MM.DD-<commit>, v* tags -> that tag); pull requests stop at the artifacts.
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'HayatoG/iss_pc'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

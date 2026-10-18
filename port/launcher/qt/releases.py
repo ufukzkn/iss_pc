@@ -7,9 +7,9 @@ import socket
 import urllib.error
 import urllib.request
 
-API_URL = 'https://api.github.com/repos/HayatoG/iss_pc/releases/latest'
-RELEASES_URL = 'https://github.com/HayatoG/iss_pc/releases/latest'
-RELEASE_PREFIX = 'https://github.com/HayatoG/iss_pc/releases/'
+API_URL = 'https://api.github.com/repos/ufukzkn/iss_pc/releases/latest'
+RELEASES_URL = 'https://github.com/ufukzkn/iss_pc/releases/latest'
+RELEASE_PREFIX = 'https://github.com/ufukzkn/iss_pc/releases/'
 TIMEOUT = 10
 
 
