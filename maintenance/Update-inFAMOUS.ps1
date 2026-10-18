@@ -152,6 +152,46 @@ function Backup-PlayerData([string]$Root, [string]$Backup) {
     }
 }
 
+function Remove-OldUpdateBackups([string]$Target, [string]$CurrentBackup) {
+    # Only completed transactions for this installation belong to automatic retention.
+    # Failed/incomplete transactions may still be needed for manual recovery.
+    $targetPath = [IO.Path]::GetFullPath($Target).TrimEnd('\','/')
+    $root = Join-Path (Split-Path -Parent $targetPath) 'infamous-update-backups'
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    Assert-NoLinks (Split-Path -Parent $root) (Split-Path -Leaf $root)
+    $eligible = @(
+        foreach ($folder in Get-ChildItem -LiteralPath $root -Directory -Force) {
+            if ($folder.Name -notmatch '^\d{8}-\d{6}-[a-f0-9]{8}$' -or
+                $folder.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            $transaction = Join-Path $folder.FullName 'transaction.json'
+            if (-not (Test-Path -LiteralPath $transaction -PathType Leaf)) { continue }
+            try {
+                Assert-NoLinks $folder.FullName 'transaction.json'
+                $data = Get-Content -LiteralPath $transaction -Raw | ConvertFrom-Json
+                if ($data.status -eq 'installed' -and $data.target -and
+                    [IO.Path]::GetFullPath($data.target).TrimEnd('\','/') -eq $targetPath) {
+                    $folder
+                }
+            } catch { continue }
+        }
+    )
+    $ordered = @($eligible | Sort-Object @{Expression={$_.FullName -eq $CurrentBackup}; Descending=$true},
+        @{Expression={$_.Name}; Descending=$true})
+    foreach ($folder in @($ordered | Select-Object -Skip 2)) {
+        # Recheck the absolute boundary and links immediately before recursive deletion.
+        $path = [IO.Path]::GetFullPath($folder.FullName)
+        if ((Split-Path -Parent $path) -ne $root -or $path -eq $CurrentBackup) {
+            throw 'Backup cleanup path is outside the owned backup folder'
+        }
+        Assert-NoLinks $root $folder.Name
+        $links = @(Get-ChildItem -LiteralPath $path -Recurse -Force | Where-Object {
+            $_.Attributes -band [IO.FileAttributes]::ReparsePoint
+        })
+        if ($links.Count) { throw 'Linked backup contents cannot be cleaned automatically' }
+        Remove-Item -LiteralPath $path -Recurse -Force
+    }
+}
+
 function Install-VerifiedPayload([string]$Payload, [string]$Target, [string]$Backup, [string]$TestFolder) {
     Assert-GameClosed
     $plan = @()
@@ -215,6 +255,9 @@ function Install-VerifiedPayload([string]$Payload, [string]$Target, [string]$Bac
         if ($rollbackErrors.Count) { throw "Update failed; some locked files could not be restored. Backup: $Backup. Files: $($rollbackErrors -join ', ')" }
         throw "Update failed; previous program files restored. Backup: $Backup. Cause: $failure"
     }
+    # Cleanup errors must never undo an otherwise successful installation.
+    try { Remove-OldUpdateBackups $Target $Backup }
+    catch { Write-Warning ('Update installed, but old backup cleanup was skipped: ' + $_.Exception.Message) }
     return $plan.Count
 }
 

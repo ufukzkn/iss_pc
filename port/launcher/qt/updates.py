@@ -205,9 +205,7 @@ class Updates(QObject):
 
     @Slot()
     def download(self):
-        url = (self.release or {}).get('url') or releases.RELEASES_URL
-        if not url.startswith(releases.RELEASE_PREFIX):
-            url = releases.RELEASES_URL
+        url = releases.RELEASES_URL
         if 'open_url' in self.probes:
             self.probes['open_url'](url)
         else:

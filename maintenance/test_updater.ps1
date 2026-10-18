@@ -64,6 +64,13 @@ function ZipPayload($Fixture, [string]$ExtraEntry='') {
     } finally { $archive.Dispose() }
     return $zip
 }
+function RetentionBackup([string]$Root, [string]$Name, [string]$Target, [string]$Status='installed') {
+    $path = Join-Path $Root $Name
+    Put $path 'program/old.exe' 'recovery-copy'
+    @{target=$Target; status=$Status; files=@()} | ConvertTo-Json |
+        Set-Content -LiteralPath (Join-Path $path 'transaction.json') -Encoding UTF8
+    return $path
+}
 try {
     foreach ($bad in @('../escape','/absolute','out/../../escape','out/name:stream','out/CON.txt','out/ends.','out/ends ')) {
         MustFail { Get-ChildPath $testRoot $bad } "Unsafe path accepted: $bad"
@@ -130,7 +137,56 @@ try {
     $PrepareOnly=$false
     MustFail { Invoke-PreparedUpdate $PreparedPlan } 'Tampered prepared payload accepted'
     Assert ((Get-Content -LiteralPath (Join-Path $tampered.Target 'out/tlg-probe.exe') -Raw) -eq 'old-game') 'Tampered payload changed the install'
-    Write-Host 'Updater tests passed: preservation, backup, rollback, process gate, archive validation and two-phase handoff.'
+
+    $retention=Fixture 'retention'
+    $retentionRoot=Join-Path $retention.Folder 'infamous-update-backups'
+    $oldest=RetentionBackup $retentionRoot '20260101-010000-aaaaaaaa' $retention.Target
+    $older=RetentionBackup $retentionRoot '20260102-010000-bbbbbbbb' $retention.Target
+    $previous=RetentionBackup $retentionRoot '20260103-010000-cccccccc' $retention.Target
+    $failed=RetentionBackup $retentionRoot '20260104-010000-dddddddd' $retention.Target 'rolled-back'
+    $foreign=RetentionBackup $retentionRoot '20260104-020000-eeeeeeee' (Join-Path $retention.Folder 'other-install')
+    $unrelated=RetentionBackup $retentionRoot 'my-manual-backup' $retention.Target
+    $malformed=Join-Path $retentionRoot '20260104-030000-ffffffff'
+    Put $malformed 'transaction.json' '{broken'
+    $current=Join-Path $retentionRoot '20260105-010000-12345678'
+    $script:FailTest=$true
+    MustFail { Install-VerifiedPayload $retention.Payload $retention.Target $current $retention.Folder } 'Failed install unexpectedly succeeded'
+    $script:FailTest=$false
+    Assert ((Test-Path -LiteralPath $oldest) -and (Test-Path -LiteralPath $older)) 'Failed install deleted recovery backups'
+    # Use a new transaction directory after the failed attempt.
+    $current=Join-Path $retentionRoot '20260106-010000-12345678'
+    Install-VerifiedPayload $retention.Payload $retention.Target $current $retention.Folder | Out-Null
+    Assert (-not (Test-Path -LiteralPath $oldest)) 'Oldest successful backup was not removed'
+    Assert (-not (Test-Path -LiteralPath $older)) 'Third successful backup was not removed'
+    Assert ((Test-Path -LiteralPath $previous) -and (Test-Path -LiteralPath $current)) 'Last two successful backups were not kept'
+    foreach ($kept in @($failed,$foreign,$unrelated,$malformed,(Join-Path $retentionRoot '20260105-010000-12345678'))) {
+        Assert (Test-Path -LiteralPath $kept) 'Cleanup removed failed, foreign or unrelated backup data'
+    }
+    # A clock moving backwards must not put the active rollback copy at risk.
+    $clock=RetentionBackup $retentionRoot '20200101-010000-11111111' $retention.Target
+    Remove-OldUpdateBackups $retention.Target $clock
+    Assert ((Test-Path -LiteralPath $clock) -and (Test-Path -LiteralPath $current)) 'Current backup was removed after a clock change'
+    Assert (-not (Test-Path -LiteralPath $previous)) 'Retention kept more than two successful transactions'
+    # A junction in an old backup must neither escape the backup root nor roll back
+    # a successfully installed update when automatic cleanup refuses it.
+    $cleanupFailure=Fixture 'cleanup-failure'
+    $cleanupRoot=Join-Path $cleanupFailure.Folder 'infamous-update-backups'
+    $linked=RetentionBackup $cleanupRoot '20260101-010000-aaaaaaaa' $cleanupFailure.Target
+    $null=RetentionBackup $cleanupRoot '20260102-010000-bbbbbbbb' $cleanupFailure.Target
+    $null=RetentionBackup $cleanupRoot '20260103-010000-cccccccc' $cleanupFailure.Target
+    $protected=Join-Path $testRoot 'outside-backups'
+    Put $protected 'keep.txt' 'protected'
+    $junction=Join-Path $linked 'program/link'
+    $null=New-Item -ItemType Junction -Path $junction -Target $protected
+    try {
+        $cleanupCurrent=Join-Path $cleanupRoot '20260104-010000-dddddddd'
+        Install-VerifiedPayload $cleanupFailure.Payload $cleanupFailure.Target $cleanupCurrent $cleanupFailure.Folder | Out-Null
+        Assert ((Get-Content -LiteralPath (Join-Path $cleanupFailure.Target 'out/tlg-probe.exe') -Raw) -eq 'new-game') 'Cleanup failure rolled back successful installation'
+        Assert ((Get-Content -LiteralPath (Join-Path $cleanupCurrent 'transaction.json') -Raw | ConvertFrom-Json).status -eq 'installed') 'Cleanup failure changed transaction status'
+        Assert ((Get-Content -LiteralPath (Join-Path $protected 'keep.txt') -Raw) -eq 'protected') 'Cleanup traversed a junction'
+        Assert (Test-Path -LiteralPath $linked) 'Linked backup was deleted'
+    } finally { [IO.Directory]::Delete($junction) }
+    Write-Host 'Updater tests passed: preservation, backup, rollback, process gate, archive validation, two-phase handoff and two-backup retention.'
 } finally {
     $env:APPDATA = $oldAppdata
     $resolved = [IO.Path]::GetFullPath($testRoot)

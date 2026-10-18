@@ -631,7 +631,7 @@ class ControllerTests(unittest.TestCase):
         self.updates.check()
         self.pump(lambda: not self.updates.checking)
         self.updates.download()
-        self.assertEqual(self.opened[-1], self.release['url'])
+        self.assertEqual(self.opened[-1], releases.RELEASES_URL)
 
     def test_install_prepares_before_handoff_and_blocks_play(self):
         events = []

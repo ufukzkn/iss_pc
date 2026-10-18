@@ -65,6 +65,7 @@ Item {
                         spacing: 10
                         GhostButton { tone: "primary"; accent: Theme.warn; text: Theme.tr("upd_check"); enabled: !Updates.checking && !Updates.installing; onClicked: Updates.check() }
                         GhostButton { text: Theme.tr("upd_install"); enabled: Updates.canInstall; onClicked: Updates.install() }
+                        GhostButton { text: Theme.tr("upd_download"); onClicked: Updates.download() }
                     }
                     ProgressBar { width: parent.width; visible: Updates.installing; indeterminate: Updates.installing }
                 }
