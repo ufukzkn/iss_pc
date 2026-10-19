@@ -50,6 +50,56 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.target / 'user/savedata/slot/dis.dat').read_text(), 'new progress')
         ui.recover(tx)  # idempotent
 
+    def test_transient_windows_lock_retries_journal_and_payload_atomically(self):
+        original = ui.os.replace
+        for writer in ('journal', 'payload'):
+            for code in (5, 32, 33):
+                with self.subTest(writer=writer, winerror=code):
+                    dest = self.root / 'atomic-target'
+                    dest.write_text('old')
+                    error = PermissionError('temporary sharing conflict')
+                    error.winerror = code
+                    def locked_once(source, target):
+                        self.assertEqual(dest.read_text(), 'old')
+                        raise error
+                    calls = 0
+                    def attempt(source, target):
+                        nonlocal calls
+                        calls += 1
+                        if calls == 1:
+                            return locked_once(source, target)
+                        return original(source, target)
+                    with mock.patch.object(ui.os, 'replace', side_effect=attempt):
+                        with mock.patch.object(ui.time, 'sleep'):
+                            if writer == 'journal':
+                                ui._json(dest, {'new': True})
+                            else:
+                                ui._copy(self.stage / 'launcher.exe', dest)
+                    self.assertEqual(calls, 2)
+                    self.assertNotEqual(dest.read_text(), 'old')
+                    self.assertFalse(list(self.root.glob('.iss-*')))
+
+    def test_permanent_lock_is_bounded_and_preserves_journal(self):
+        dest = self.root / 'atomic-target'
+        dest.write_text('old')
+        error = PermissionError('persistent lock')
+        error.winerror = 5
+        with mock.patch.object(ui.os, 'replace', side_effect=error), \
+                mock.patch.object(ui.time, 'monotonic', side_effect=[0, 1, 6]), \
+                mock.patch.object(ui.time, 'sleep') as sleep:
+            with self.assertRaises(PermissionError):
+                ui._json(dest, {'new': True})
+        self.assertEqual(dest.read_text(), 'old')
+        sleep.assert_called_once_with(0.1)
+        self.assertFalse(list(self.root.glob('.iss-write-*')))
+
+    def test_unrelated_replace_error_is_not_retried(self):
+        with mock.patch.object(ui.os, 'replace', side_effect=OSError('disk failure')), \
+                mock.patch.object(ui.time, 'sleep') as sleep:
+            with self.assertRaises(OSError):
+                ui._json(self.root / 'state.json', {})
+        sleep.assert_not_called()
+
     def test_corrupt_payload_refused_before_writing(self):
         (self.stage / 'launcher.exe').write_text('corrupt')
         with self.assertRaises(ui.InstallError):

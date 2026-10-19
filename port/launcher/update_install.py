@@ -37,6 +37,21 @@ def _hash(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def _replace(source, dest):
+    # Indexers, sync clients and virus scanners may briefly open a newly written
+    # file without FILE_SHARE_DELETE. Keep atomic replacement; never unlink the
+    # destination journal to work around a lock. Permanent errors still fail.
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            os.replace(source, dest)
+            return
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
 def _json(path, data):
     path = Path(path)
     fd, tmp = tempfile.mkstemp(prefix='.iss-write-', dir=path.parent)
@@ -45,7 +60,7 @@ def _json(path, data):
             json.dump(data, stream, ensure_ascii=False, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(tmp, path)
+        _replace(tmp, path)
     finally:
         Path(tmp).unlink(missing_ok=True)
 
@@ -248,7 +263,7 @@ def _copy(source, dest):
             shutil.copyfileobj(inp, out)
             out.flush()
             os.fsync(out.fileno())
-        os.replace(tmp, dest)
+        _replace(tmp, dest)
     finally:
         Path(tmp).unlink(missing_ok=True)
 
