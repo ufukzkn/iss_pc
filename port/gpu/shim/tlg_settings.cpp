@@ -80,7 +80,9 @@ void Set(Values& v, const std::string& key, const std::string& value) {
             return;
         }
     }
-    if (key == "key_map") {
+    if (key == "lazy_programs") {
+        v.lazy_programs_pref = value.empty() ? -1 : i != 0;
+    } else if (key == "key_map") {
         v.key_map = value;
         return;
     }
@@ -412,6 +414,7 @@ void Save() {
     for (int e = 0; e < kExtraPrefs; ++e) {
         if (const int p = v.extra_pref[e]; p >= 0) std::fprintf(file, "%s=%d\n", kExtraKeys[e], p);
     }
+    if (const int p = v.lazy_programs_pref; p >= 0) std::fprintf(file, "lazy_programs=%d\n", p);
     std::fprintf(file,
                  "mouse_enabled=%d\nmouse_sensitivity=%.2f\nmouse_invert_y=%d\nmouse_smoothing=%.2f\n"
                  "mouse_accel=%.2f\nmouse_deadzone=%.2f\nkey_map=%s\n",

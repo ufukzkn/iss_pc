@@ -124,6 +124,8 @@ struct Values {
     /// (the built-in default), 0 / 1 = chosen. Kept so Save() does not drop what the launcher wrote.
     std::atomic<int> backport_pref[kBackportPrefs];
     std::atomic<int> extra_pref[kExtraPrefs];
+    /// Launcher-only cache-loading choice: preserve it when the in-game menu saves live controls.
+    std::atomic<int> lazy_programs_pref{-1};
     Values() {
         for (auto& p : backport_pref) p = -1;
         for (auto& p : extra_pref) p = -1;

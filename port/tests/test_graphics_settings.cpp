@@ -48,7 +48,7 @@ int main() {
         std::ofstream out(path);
         out << "display_mode=borderless\nvsync=0\nfps_limit=240\nasync_shaders=0\n"
                "render_resolution=1440p\nengine_fps=240\ndeferred_readback=0\nstale_readback=1\n"
-               "fsr1=1\nrcas=0\nrcas_strength=40\nframes_queued=2\nstick_look_sensitivity=1.35\n";
+               "fsr1=1\nrcas=0\nrcas_strength=40\nframes_queued=2\nstick_look_sensitivity=1.35\nlazy_programs=0\n";
     }
     SetEnv("TLG_CONFIG", path);
     SetEnv("TLG_ASYNC_SHADERS", "");
@@ -59,6 +59,7 @@ int main() {
     assert(v.render_resolution == 3 && v.engine_fps == 240 && !v.deferred_readback && v.stale_readback);
     assert(v.fsr1 && !v.rcas && v.rcas_strength == 40 && v.frames_queued == 2);
     assert(v.stick_look_sensitivity == 1.35f);
+    assert(v.lazy_programs_pref == 0);
     assert(!TlgSettings::GraphicsNeedRestart());
     assert(v.applied_engine_fps == 240);  // no TLG_ENGINE_FPS: the configured rate
     SetEnv("TLG_ENGINE_FPS", "60");    // run.py: the frame rate patch did not apply
@@ -76,7 +77,7 @@ int main() {
     for (const char* line : {"display_mode=borderless\n", "vsync=0\n", "fps_limit=60\n", "async_shaders=0\n",
                              "render_resolution=1440p\n", "engine_fps=240\n", "deferred_readback=0\n",
                              "stale_readback=1\n", "fsr1=1\n", "rcas=0\n", "rcas_strength=40\n",
-                             "frames_queued=2\n", "stick_look_sensitivity=1.350\n"}) {
+                             "frames_queued=2\n", "stick_look_sensitivity=1.350\n", "lazy_programs=0\n"}) {
         assert(saved.find(line) != std::string::npos);
     }
 
