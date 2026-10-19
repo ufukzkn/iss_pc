@@ -258,7 +258,7 @@ def _check_tar(archive):
                 raise UpdateError('archive', member.name)
 
 
-def extract(archive_path, target, top):
+def extract(archive_path, target, top, progress=None):
     """Extracts the archive into `target` (which must not exist) through a hidden sibling, then
     renames: a failed extraction leaves no half folder that looks like an install. `top` is the
     archive's top folder (package_folder); an archive without it is taken as is."""
@@ -274,7 +274,13 @@ def extract(archive_path, target, top):
                 for name in archive.namelist():
                     if not _safe_name(name):
                         raise UpdateError('archive', name)
-                archive.extractall(tmp)
+                members = archive.infolist()
+                for index, member in enumerate(members):
+                    if progress:
+                        progress('extract', index, len(members), member.filename)
+                    archive.extract(member, tmp)
+                if progress:
+                    progress('extract', len(members), len(members), '')
         else:
             try:
                 archive = tarfile.open(archive_path, 'r:*')

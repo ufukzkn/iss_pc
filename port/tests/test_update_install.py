@@ -50,6 +50,23 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.target / 'user/savedata/slot/dis.dat').read_text(), 'new progress')
         ui.recover(tx)  # idempotent
 
+    def test_progress_reports_install_and_recovery_without_changing_journal_safety(self):
+        events = []
+        tx = ui.prepare(self.stage, self.target, 'new', exe_name='launcher.exe',
+                        progress=lambda *event: events.append(event))
+        self.assertIn('verify-package', {event[0] for event in events})
+        self.assertIn('check-install', {event[0] for event in events})
+        events.clear()
+        ui.apply(tx, progress=lambda *event: events.append(event))
+        done = [event for event in events if event[0] == 'apply']
+        self.assertEqual(done[0][1], 0)
+        self.assertEqual(done[-1][1:3], (3, 3))
+        events.clear()
+        ui.recover(tx, progress=lambda *event: events.append(event))
+        self.assertEqual(events[-1][0:3], ('recover', 3, 3))
+        self.assertEqual((self.target / 'launcher.exe').read_text(), 'old')
+        self.assert_personal()
+
     def test_transient_windows_lock_retries_journal_and_payload_atomically(self):
         original = ui.os.replace
         for writer in ('journal', 'payload'):

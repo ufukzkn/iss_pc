@@ -6,7 +6,9 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+import threading
 import unittest
+from unittest import mock
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'launcher'))
@@ -113,6 +115,52 @@ class ControllerTests(unittest.TestCase):
             self.pump(lambda: bool(self.u._error))
             self.assertEqual(self.handoffs, [])
         self.assertEqual((self.port / 'launcher.exe').read_text(), 'old')
+
+    def test_slow_journal_inspection_does_not_block_gui_or_property_reads(self):
+        entered, release = threading.Event(), threading.Event()
+        state = (self.root / 'transaction.json', {'status': 'confirmed'})
+        def slow_pending(_):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return state
+        with mock.patch.object(update_install, 'pending', side_effect=slow_pending) as pending:
+            self.u.refreshInstallation()
+            self.assertTrue(entered.wait(1))
+            try:
+                self.assertTrue(self.u.busy)
+                for _ in range(100):
+                    self.assertFalse(self.u.canRollback)
+                    self.app.processEvents()
+            finally:
+                release.set()
+            self.pump(lambda: not self.u.busy)
+            self.assertTrue(self.u.canRollback)
+            for _ in range(100):
+                self.assertTrue(self.u.canRollback)
+            pending.assert_called_once()
+
+    def test_save_backup_and_handoff_run_off_gui_thread(self):
+        gui_thread = threading.get_ident()
+        threads = []
+        self.u.probes['backup'] = lambda: threads.append(threading.get_ident())
+        def handoff(*args):
+            threads.append(threading.get_ident())
+            self.handoffs.append(args)
+        self.u.probes['handoff'] = handoff
+        self.u.install()
+        self.u.answer('yes')
+        self.pump(lambda: self.backend.quit_called or bool(self.u._error))
+        self.assertEqual(self.u._error, '')
+        self.assertEqual(len(threads), 2)
+        self.assertTrue(all(ident != gui_thread for ident in threads))
+
+    def test_prepare_reports_actual_stage_and_file_count(self):
+        self.u._phase = 'prepare'
+        self.u._on_install_progress(('verify-package', 3, 10, 'out/runtime.dll'))
+        self.assertAlmostEqual(self.u.progress, .3)
+        self.assertIn('3/10', self.u.progressText)
+        self.assertEqual(self.u.progressDetail, 'out/runtime.dll')
+        self.assertFalse(self.u.progressIndeterminate)
 
 
 if __name__ == '__main__':

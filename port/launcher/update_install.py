@@ -138,7 +138,13 @@ def write_manifest(folder, version, paths=None):
     return manifest
 
 
-def _check_payload(stage, protected=()):
+def _notify(progress, phase, done=0, total=0, name=''):
+    if progress:
+        progress(phase, done, total, name)
+
+
+def _check_payload(stage, protected=(), progress=None):
+    _notify(progress, 'verify-package')
     manifest = _read(Path(stage) / MANIFEST)
     entries = _entries(manifest)
     actual = set()
@@ -149,10 +155,12 @@ def _check_payload(stage, protected=()):
             actual.add(name)
     if actual != set(entries):
         raise InstallError('archive', 'unlisted or missing package files')
-    for name, row in entries.items():
+    for index, (name, row) in enumerate(entries.items()):
+        _notify(progress, 'verify-package', index, len(entries), name)
         path = _path(stage, name)
         if path.stat().st_size != row['size'] or _hash(path) != row['sha256']:
             raise InstallError('checksum', name)
+    _notify(progress, 'verify-package', len(entries), len(entries))
     return manifest, entries
 
 
@@ -164,7 +172,7 @@ def source_checkout(target):
             and any((p / '.git').exists() for p in target.parents))
 
 
-def prepare(stage, target, release_tag, exe_name='inFAMOUS Second Son.exe', protected=()):
+def prepare(stage, target, release_tag, exe_name='inFAMOUS Second Son.exe', protected=(), progress=None):
     stage, target = Path(stage).resolve(), Path(target).resolve()
     if source_checkout(target):
         raise InstallError('source', target)
@@ -172,14 +180,16 @@ def prepare(stage, target, release_tag, exe_name='inFAMOUS Second Son.exe', prot
         raise InstallError('archive', 'invalid source or destination')
     if stage.stat().st_dev != target.stat().st_dev:
         raise InstallError('write', 'staging must be on the installation volume')
-    manifest, incoming = _check_payload(stage)
+    manifest, incoming = _check_payload(stage, progress=progress)
     if str(manifest.get('version')) != str(release_tag) or exe_name not in incoming:
         raise InstallError('protocol', 'version or launcher missing')
     old_manifest = target / MANIFEST
     old = _entries(_read(old_manifest)) if old_manifest.is_file() else {}
     protected = [str(Path(p).resolve()) for p in protected if p]
     operations = []
-    for name in sorted(set(incoming) | set(old)) + [MANIFEST]:
+    names = sorted(set(incoming) | set(old)) + [MANIFEST]
+    for index, name in enumerate(names):
+        _notify(progress, 'check-install', index, len(names), name)
         dest = _path(target, name, protected, allow_manifest=True)
         src = _path(stage, name, allow_manifest=True) if name in incoming or name == MANIFEST else None
         before = _hash(dest) if dest.is_file() else None
@@ -191,6 +201,7 @@ def prepare(stage, target, release_tag, exe_name='inFAMOUS Second Son.exe', prot
             raise InstallError('conflict', name)
         operations.append({'path': name, 'before': before, 'after': _hash(src) if src else None,
                            'size': dest.stat().st_size if before else 0, 'state': 'pending'})
+    _notify(progress, 'check-install', len(names), len(names))
     need = sum(row['size'] for row in operations) + sum(r['size'] for r in incoming.values()) + 50_000_000
     if shutil.disk_usage(target).free < need:
         raise InstallError('space', str(need))
@@ -268,10 +279,12 @@ def _copy(source, dest):
         Path(tmp).unlink(missing_ok=True)
 
 
-def _restore(transaction, data):
+def _restore(transaction, data, progress=None):
     data['status'] = 'recovering'
     _json(transaction, data)
-    for row in reversed(data['operations']):
+    rows = [row for row in reversed(data['operations']) if row['state'] in ('started', 'done')]
+    _notify(progress, 'recover', 0, len(rows))
+    for index, row in enumerate(rows):
         if row['state'] not in ('started', 'done'):
             continue
         dest = _path(data['target'], row['path'], data.get('protected', ()), allow_manifest=True)
@@ -289,6 +302,7 @@ def _restore(transaction, data):
             dest.unlink()
         row['state'] = 'restored'
         _json(transaction, data)
+        _notify(progress, 'recover', index + 1, len(rows), row['path'])
     data['status'] = 'rolled_back'
     _json(transaction, data)
     _record_state(transaction, data)
@@ -300,16 +314,18 @@ def _record_state(transaction, data):
           {'transaction': str(transaction), 'completed': data})
 
 
-def apply(transaction, wait_pid=0, after_replace=None):
+def apply(transaction, wait_pid=0, after_replace=None, progress=None):
+    _notify(progress, 'check-install')
     if wait_pid:
         wait_for_exit(wait_pid)
     transaction, data = _load(transaction)
     with install_lock(data['target']), install_lock(data['target'], '.iss-launcher.lock'):
         if data['status'] != 'prepared':
             raise InstallError('recovery', 'transaction is not prepared')
-        _check_payload(Path(data['stage']))
+        _check_payload(Path(data['stage']), progress=progress)
         # Check all destinations before any write: configuration cannot race the preview.
-        for row in data['operations']:
+        for index, row in enumerate(data['operations']):
+            _notify(progress, 'check-install', index, len(data['operations']), row['path'])
             path = _path(data['target'], row['path'], data.get('protected', ()), allow_manifest=True)
             if (_hash(path) if path.is_file() else None) != row['before']:
                 raise InstallError('conflict', row['path'])
@@ -321,7 +337,9 @@ def apply(transaction, wait_pid=0, after_replace=None):
             'operations': [{key: row[key] for key in ('path', 'before', 'after', 'size')}
                            for row in data['operations']]})
         try:
+            _notify(progress, 'apply', 0, len(data['operations']))
             for index, row in enumerate(data['operations']):
+                _notify(progress, 'apply', index, len(data['operations']), row['path'])
                 dest = _path(data['target'], row['path'], data.get('protected', ()), allow_manifest=True)
                 if row['before'] is not None:
                     backup = _path(transaction.parent / 'backup', row['path'], allow_manifest=True)
@@ -341,22 +359,24 @@ def apply(transaction, wait_pid=0, after_replace=None):
                     after_replace(index)
                 row['state'] = 'done'
                 _json(transaction, data)
+                _notify(progress, 'apply', index + 1, len(data['operations']), row['path'])
             data['status'] = 'installed'
             _json(transaction, data)
             _record_state(transaction, data)
         except Exception as error:
-            _restore(transaction, data)
+            _restore(transaction, data, progress=progress)
             raise InstallError(getattr(error, 'kind', 'write'), str(error)) from error
     return 0
 
 
-def recover(transaction, wait_pid=0):
+def recover(transaction, wait_pid=0, progress=None):
+    _notify(progress, 'recover')
     if wait_pid:
         wait_for_exit(wait_pid)
     transaction, data = _load(transaction)
     with install_lock(data['target']), install_lock(data['target'], '.iss-launcher.lock'):
         if data['status'] != 'rolled_back':
-            _restore(transaction, data)
+            _restore(transaction, data, progress=progress)
     return 0
 
 
@@ -478,14 +498,18 @@ def wait_for_exit(pid, timeout=60):
         raise InstallError('busy', pid)
 
 
-def helper(transaction, wait_pid, rollback=False):
+def helper(transaction, wait_pid, rollback=False, progress=None, show_errors=True):
     """Frozen launcher role; log beside the journal, never in the game's log."""
-    transaction, data = _load(transaction)
+    transaction = Path(transaction).resolve()
     try:
+        _notify(progress, 'check-install')
+        transaction, data = _load(transaction)
+        _notify(progress, 'wait')
         wait_for_exit(wait_pid)
         if game_running():
             raise InstallError('busy', 'game is running')
-        (recover if rollback else apply)(transaction)
+        (recover if rollback else apply)(transaction, progress=progress)
+        _notify(progress, 'restart')
         env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT='1')
         env.pop('_MEIPASS2', None)
         subprocess.Popen([str(Path(data['target']) / data['exe'])], cwd=data['target'], env=env,
@@ -493,7 +517,8 @@ def helper(transaction, wait_pid, rollback=False):
         return 0
     except Exception as error:
         (transaction.parent / 'update-error.log').write_text(str(error), encoding='utf-8')
-        if os.name == 'nt':
+        _notify(progress, 'error', name=str(error))
+        if os.name == 'nt' and show_errors:
             ctypes.windll.user32.MessageBoxW(None, f'{error}\n\n{transaction.parent}',
                                             'inFAMOUS — Update / Atualização', 0x10)
         return 1

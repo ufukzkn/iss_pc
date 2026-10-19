@@ -90,6 +90,19 @@ def run():
         if not image.isNull():
             colors = {image.pixel(x, y) for x in range(0, image.width(), 37) for y in range(0, image.height(), 29)}
             check(len(colors) > 3, 'the rendered frame is blank')
+        # The staged updater is a separate Qt entry point. Prove its Python
+        # module and QML are packaged as well, without starting any disk work.
+        from PySide6.QtCore import QUrl
+        from PySide6.QtQml import QQmlApplicationEngine
+        from .update_progress import UpdateProgress
+        progress_model = UpdateProgress(logic.Translator(settings), lambda _: 0)
+        progress_engine = QQmlApplicationEngine()
+        progress_engine.rootContext().setContextProperty('updateJob', progress_model)
+        progress_engine.load(QUrl.fromLocalFile(str(here / 'qml' / 'UpdateProgress.qml')))
+        check(bool(progress_engine.rootObjects()), 'update progress window did not load')
+        if progress_engine.rootObjects():
+            progress_model._complete(0)
+            progress_engine.rootObjects()[0].close()
         backend.shutdown()
     except Exception as error:
         check(False, f'the interface did not open: {error!r}')

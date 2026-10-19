@@ -11,6 +11,8 @@ checks = {
     'port/src/runtime_pad.c': ('sample_gyro_aim', 'stick_look_axis'),
     'port/launcher/qt/updates.py': ('canInstall', 'update_install.prepare'),
     'port/launcher/update_install.py': ('write_manifest', 'install_lock'),
+    'port/launcher/qt/update_progress.py': ('UpdateProgress', 'show_errors=False'),
+    'port/launcher/qt/qml/UpdateProgress.qml': ('updateJob.timing', 'updateJob.countText'),
     'port/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp': ('UseOnDemandShaderStages', '"TLG_LAZY_PROGRAMS"'),
     'port/launcher/backports_table.py': ('TLG_LAZY_PROGRAMS',),
     'port/launcher/qt/graphics.py': ('TLG_LAZY_PROGRAMS',),

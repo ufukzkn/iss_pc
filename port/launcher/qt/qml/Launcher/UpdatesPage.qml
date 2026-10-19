@@ -64,11 +64,25 @@ Item {
                     Column {
                         visible: Updates.busy
                         width: versions.width; spacing: 6
-                        Rectangle {
-                            width: parent.width; height: 6; radius: 3; color: Theme.ghostLine
-                            Rectangle { width: parent.width * Math.max(0, Math.min(1, Updates.progress)); height: parent.height; radius: 3; color: Theme.warn }
+                        ProgressBar {
+                            id: progressBar
+                            width: parent.width; value: Updates.progress; indeterminate: Updates.progressIndeterminate
+                            background: Rectangle { implicitHeight: 6; radius: 3; color: Theme.ghostLine }
+                            contentItem: Item {
+                                implicitHeight: 6
+                                Rectangle {
+                                    width: parent.width * (progressBar.indeterminate ? 0.22 : progressBar.position)
+                                    height: parent.height; radius: 3; color: Theme.warn
+                                    SequentialAnimation on opacity {
+                                        running: progressBar.indeterminate; loops: Animation.Infinite
+                                        NumberAnimation { from: 0.3; to: 1; duration: 650 }
+                                        NumberAnimation { from: 1; to: 0.3; duration: 650 }
+                                    }
+                                }
+                            }
                         }
-                        Text { text: Updates.progressText; color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
+                        Text { width: parent.width; text: Updates.progressText; wrapMode: Text.WordWrap; color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
+                        Text { width: parent.width; visible: text !== ""; text: Updates.progressDetail; elide: Text.ElideMiddle; color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 11 }
                     }
                     Flow {
                         width: versions.width; spacing: 10

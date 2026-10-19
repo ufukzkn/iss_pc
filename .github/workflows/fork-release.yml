@@ -101,7 +101,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Upstream merge routing test failed' }
           python -m unittest discover -s port/tests -p test_qt_support.py -v
           if ($LASTEXITCODE) { throw 'Release/controller tests failed' }
-          foreach ($test in @('test_import_addcont.py', 'test_updater.py', 'test_qt_updater.py', 'test_update_install.py', 'test_update_windows.py')) {
+          foreach ($test in @('test_import_addcont.py', 'test_updater.py', 'test_qt_updater.py', 'test_qt_update_progress.py', 'test_update_install.py', 'test_update_windows.py')) {
             python -m unittest discover -s port/tests -p $test -v
             if ($LASTEXITCODE) { throw "Upstream updater/import tests failed: $test" }
           }

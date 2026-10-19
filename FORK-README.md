@@ -23,6 +23,14 @@ an official binary cannot retain code absent from that binary. The fork merges t
 latest official stable source release and rebuilds it with the retained patches.
 No game files, DLC packages, firmware, personal settings or saves are distributed.
 
+Windows installation now keeps a visible progress window after the launcher closes:
+verification, program-file backup/installation, rollback and restart show their own
+file counts, current file, elapsed time and time since the last progress event.
+Close is enabled only after the operation finishes or fails. Preparation reports
+extraction/verification progress in the launcher. Journal inspection, confirmation,
+snapshot pruning, save backup and helper startup run outside the GUI thread;
+the rollback button uses cached state instead of validating every file on each repaint.
+
 The upstream engine verifies the package, replaces manifest-owned program files in
 the same directory, journals the transaction and supports rollback. Saves, settings,
 mods and caches remain outside managed program files. Close the game first. The

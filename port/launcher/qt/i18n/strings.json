@@ -491,5 +491,21 @@
   "adv_nothing": {"en": "Nothing found.", "pt": "Nada encontrado."},
   "adv_auto": {"en": "automatic", "pt": "automático"},
   "adv_profile_default": {"en": "All defaults", "pt": "Tudo no padrão"},
-  "adv_profile_custom": {"en": "{n} changed", "pt": "{n} alterado(s)"}
+  "adv_profile_custom": {"en": "{n} changed", "pt": "{n} alterado(s)"},
+  "upd_phase_inspect": {"en": "Checking update recovery and retaining backups…", "pt": "Verificando recuperação e retenção de backups…"},
+  "upd_phase_cleanup": {"en": "Cleaning up the unused download…", "pt": "Limpando o download não utilizado…"},
+  "upd_phase_extract": {"en": "Extracting the update…", "pt": "Extraindo a atualização…"},
+  "upd_phase_verify-package": {"en": "Verifying package files…", "pt": "Verificando os arquivos do pacote…"},
+  "upd_phase_check-install": {"en": "Checking the installation…", "pt": "Verificando a instalação…"},
+  "upd_phase_backup": {"en": "Backing up saves…", "pt": "Fazendo backup dos saves…"},
+  "upd_phase_wait": {"en": "Waiting for the launcher to close…", "pt": "Aguardando o launcher fechar…"},
+  "upd_phase_apply": {"en": "Backing up and installing program files…", "pt": "Salvando e instalando os arquivos do programa…"},
+  "upd_phase_recover": {"en": "Restoring the previous version…", "pt": "Restaurando a versão anterior…"},
+  "upd_phase_restart": {"en": "Reopening the launcher…", "pt": "Reabrindo o launcher…"},
+  "upd_phase_done": {"en": "Update finished. The launcher is reopening.", "pt": "Atualização concluída. O launcher está reabrindo."},
+  "upd_phase_error": {"en": "Update stopped — see the details below", "pt": "Atualização interrompida — veja os detalhes abaixo"},
+  "upd_elapsed": {"en": "Elapsed: {elapsed}s · Last progress: {idle}s ago", "pt": "Tempo: {elapsed}s · Último progresso há {idle}s"},
+  "upd_helper_hint": {"en": "Keep this window open. Large files and temporary Windows locks can take time. The launcher reopens automatically.", "pt": "Mantenha esta janela aberta. Arquivos grandes e bloqueios temporários do Windows podem demorar. O launcher reabre automaticamente."},
+  "upd_helper_error_hint": {"en": "Keep the installation and recovery folders. Details are saved in update-error.log beside transaction.json.", "pt": "Mantenha as pastas de instalação e recuperação. Os detalhes estão em update-error.log ao lado de transaction.json."},
+  "upd_helper_close": {"en": "Close", "pt": "Fechar"}
 }

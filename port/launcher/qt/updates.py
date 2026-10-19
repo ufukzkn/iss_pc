@@ -27,6 +27,8 @@ class Updates(QObject):
     dialogChanged = Signal()
     progressed = Signal(object)    # (done, total) from the download thread
     stepDone = Signal(object)      # ('downloaded' | 'installed' | 'prepared', value) or an error
+    installProgress = Signal(object)
+    inspected = Signal(object)
 
     def __init__(self, backend, probes=None):
         """probes (tests, screenshots): 'fetch' -> f(version) returning the release dict or raising
@@ -42,6 +44,9 @@ class Updates(QObject):
         self._error = ''
         self._phase = ''          # '' | download | install | prepare | handoff | ready
         self._progress = (0, 0)
+        self._detail = ''
+        self._install_stage = ''
+        self._rollback_state = None
         self._verified = False
         self._archive = None      # the downloaded, checked package
         self._work = None         # this update's temporary folder, beside the install
@@ -54,6 +59,8 @@ class Updates(QObject):
         self.fetched.connect(self._on_fetched)
         self.progressed.connect(self._on_progress)
         self.stepDone.connect(self._on_step)
+        self.installProgress.connect(self._on_install_progress)
+        self.inspected.connect(self._on_inspected)
         if hasattr(backend, 'stateChanged'):    # a game or shader job starting changes what can be installed
             backend.stateChanged.connect(self.changed)
 
@@ -219,7 +226,7 @@ class Updates(QObject):
 
     @Property(bool, notify=changed)
     def busy(self):
-        return self._phase in ('download', 'install', 'prepare', 'handoff')
+        return self._phase in ('download', 'install', 'prepare', 'handoff', 'inspect', 'cleanup')
 
     @Property(bool, notify=changed)
     def canInstall(self):
@@ -247,11 +254,42 @@ class Updates(QObject):
         """Windows: the previous version is kept until another update is confirmed."""
         if not self.frozen() or not self.windows() or self.busy or self.running():
             return False
-        try:
-            state = update_install.pending(self.port_dir())
-        except update_install.InstallError:
-            return False
+        state = self._rollback_state
         return bool(state and state[1]['status'] in ('confirmed', 'installed'))
+
+    def refreshInstallation(self, confirm=False):
+        """Journal validation and snapshot pruning must never run in QML getters or the GUI thread."""
+        if self.busy:
+            return
+        port = self.port_dir()
+        self._phase = 'inspect'
+        self.changed.emit()
+        def work():
+            try:
+                state = update_install.pending(port)
+                if confirm:
+                    update_install.confirm(port)
+                self.inspected.emit(state)
+            except Exception as error:
+                self.inspected.emit(error)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_inspected(self, result):
+        self._phase = ''
+        if isinstance(result, Exception):
+            self._fail(result)
+            return
+        self._rollback_state = result
+        self.changed.emit()
+
+    @Property(bool, notify=changed)
+    def progressIndeterminate(self):
+        return self._phase != 'download' and not self._progress[1]
+
+    def _on_install_progress(self, value):
+        self._install_stage, done, total, self._detail = value
+        self._progress = (done, total)
+        self.changed.emit()
 
     @Property(float, notify=changed)
     def progress(self):
@@ -264,8 +302,17 @@ class Updates(QObject):
             done, total = self._progress
             return self.t('upd_downloading', done=_mb(done), total=_mb(total),
                           pct=int(100 * done / total) if total else 0)
-        key = {'install': 'upd_installing', 'prepare': 'upd_preparing', 'handoff': 'upd_closing'}.get(self._phase)
+        if self._phase == 'prepare' and self._install_stage:
+            done, total = self._progress
+            text = self.t('upd_phase_' + self._install_stage)
+            return text + (f' — {done}/{total}' if total else '')
+        key = {'install': 'upd_installing', 'prepare': 'upd_preparing', 'handoff': 'upd_closing',
+               'inspect': 'upd_phase_inspect', 'cleanup': 'upd_phase_cleanup'}.get(self._phase)
         return self.t(key) if key else ''
+
+    @Property(str, notify=changed)
+    def progressDetail(self):
+        return self._detail if self._phase == 'prepare' else ''
 
     @Property(str, notify=changed)
     def installHint(self):
@@ -297,8 +344,13 @@ class Updates(QObject):
         self._error = self.t('upd_err_' + getattr(error, 'kind', 'write'),
                              detail=getattr(error, 'detail', str(error)))
         if self._work and not self._handed:    # once the helper has the journal, its folder is the recovery
-            shutil.rmtree(self._work, ignore_errors=True)
+            work = self._work
             self._work = None
+            self._phase = 'cleanup'
+            def cleanup():
+                shutil.rmtree(work, ignore_errors=True)
+                self.stepDone.emit(('discarded', None))
+            threading.Thread(target=cleanup, daemon=True).start()
         self.changed.emit()
 
     @Slot()
@@ -377,7 +429,10 @@ class Updates(QObject):
             self._fail(result)
             return
         step, value = result
-        if step == 'downloaded':
+        if step == 'discarded':
+            self._phase = ''
+            self.changed.emit()
+        elif step == 'downloaded':
             self._archive, self._verified = value
             self._phase = ''
             self.changed.emit()
@@ -393,6 +448,12 @@ class Updates(QObject):
             self._ask_restart()
         elif step == 'prepared':
             self._handoff(value)
+        elif step == 'handed':
+            self._handed = True
+            if 'quit' in self.probes:
+                self.probes['quit']()
+            else:
+                self.backend._quit_app()
 
     def _ask_install(self):
         """Step 2 (Linux): the package is here and checked; ask before installing it."""
@@ -460,13 +521,22 @@ class Updates(QObject):
         if self.backend.settings.get('game_dir'):
             protected.append(str(self.backend.settings['game_dir']))
         self._phase, self._error = 'prepare', ''
+        self._progress, self._install_stage, self._detail = (0, 0), '', ''
         self.changed.emit()
 
         def work():
             try:
-                stage = updater.extract(archive, workdir / 'payload', updater.package_folder(archive.name))
+                progress = lambda *value: self.installProgress.emit(value)
+                stage = updater.extract(archive, workdir / 'payload', updater.package_folder(archive.name),
+                                        progress=progress)
                 archive.unlink(missing_ok=True)
-                transaction = update_install.prepare(stage, port, tag, exe_name=exe, protected=protected)
+                transaction = update_install.prepare(stage, port, tag, exe_name=exe, protected=protected,
+                                                     progress=progress)
+                progress('backup', 0, 0, '')
+                if 'backup' in self.probes:
+                    self.probes['backup']()
+                else:
+                    savemanager.backup_now(self.data_dir())
                 self.stepDone.emit(('prepared', transaction))
             except Exception as error:
                 self.stepDone.emit(error)
@@ -474,35 +544,27 @@ class Updates(QObject):
 
     def _handoff(self, transaction, rollback=False):
         """Windows: this launcher closes; the helper waits for it, applies the journal and reopens."""
-        try:
-            if self.running(live=True):
-                raise update_install.InstallError('busy', 'game')
-            if not rollback:
-                if 'backup' in self.probes:
-                    self.probes['backup']()
+        self._save()
+        self._phase, self._progress = 'handoff', (0, 0)
+        self.changed.emit()
+        def work():
+            try:
+                if self.running(live=True):
+                    raise update_install.InstallError('busy', 'game')
+                if 'handoff' in self.probes:
+                    self.probes['handoff'](transaction, rollback)
                 else:
-                    savemanager.backup_now(self.data_dir())
-            self._save()
-            self._phase = 'handoff'
-            self.changed.emit()
-            if 'handoff' in self.probes:
-                self.probes['handoff'](transaction, rollback)
-            else:
-                update_install.start_helper(transaction, rollback=rollback)
-            self._handed = True
-        except Exception as error:
-            self._fail(error)
-            return
-        if 'quit' in self.probes:
-            self.probes['quit']()
-        else:
-            self.backend._quit_app()
+                    update_install.start_helper(transaction, rollback=rollback)
+                self.stepDone.emit(('handed', None))
+            except Exception as error:
+                self.stepDone.emit(error)
+        threading.Thread(target=work, daemon=True).start()
 
     @Slot()
     def rollback(self):
         if not self.canRollback:
             return
-        transaction, _ = update_install.pending(self.port_dir())
+        transaction, _ = self._rollback_state
         self._ask(self.t('upd_rollback'), self.t('upd_rollback_confirm'),
                   [('yes', self.t('upd_rollback'), 'primary'), ('no', self.t('upd_cancel'), 'ghost')],
                   {'yes': lambda: self._handoff(transaction, True)})

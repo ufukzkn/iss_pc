@@ -279,8 +279,11 @@ class StringsTests(unittest.TestCase):
                      'offline', 'timeout', 'limit', 'http', 'bad'):
             self.assertIn('upd_err_' + kind, strings)
         text = (ROOT / 'launcher' / 'qt' / 'updates.py').read_text(encoding='utf-8')
-        for key in set(__import__('re').findall(r"'(upd_\w+)'", text)) - {'upd_err_'}:
+        for key in set(__import__('re').findall(r"'(upd_\w+)'", text)) - {'upd_err_', 'upd_phase_'}:
             self.assertIn(key, strings, key)
+        for phase in ('inspect', 'extract', 'verify-package', 'check-install', 'backup', 'wait',
+                      'apply', 'recover', 'restart', 'done', 'error'):
+            self.assertIn('upd_phase_' + phase, strings)
 
 
 @unittest.skipUnless(HAVE_QT, 'PySide6 not installed')

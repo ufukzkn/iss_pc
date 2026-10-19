@@ -19,8 +19,8 @@ def main():
     multiprocessing.freeze_support()   # packaged: the shader list generator starts worker processes (re-runs this exe)
     args = sys.argv[1:]
     if args[:1] in (['--apply-update'], ['--rollback-update']) and len(args) == 3:
-        import update_install
-        sys.exit(update_install.helper(args[1], int(args[2]), rollback=args[0] == '--rollback-update'))
+        from qt import update_progress
+        sys.exit(update_progress.run(args[1], int(args[2]), rollback=args[0] == '--rollback-update'))
     # Same packaged roles as the Tk launcher: preparation scripts and a window-less --play.
     if args[:1] == ['--script'] and len(args) > 1:
         sys.exit(tlg_run.run_script(args[1:]))
@@ -74,7 +74,7 @@ def main():
         app = App()
         if launch_lock:
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: update_install.confirm(tlg_run.PORT_DIR))
+            QTimer.singleShot(0, lambda: app.backend.updates.refreshInstallation(confirm=True))
         code = app.run()
     finally:
         if launch_lock:
