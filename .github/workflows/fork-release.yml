@@ -107,6 +107,8 @@ jobs:
           }
           python -m unittest discover -s port/tests -p test_qt_screens_a.py -v
           if ($LASTEXITCODE) { throw 'Controls/settings tests failed' }
+          python -m unittest discover -s port/tests -p test_backports_table.py -v
+          if ($LASTEXITCODE) { throw 'Shader cache option/environment tests failed' }
           powershell.exe -NoProfile -File maintenance/test_updater.ps1
           if ($LASTEXITCODE) { throw 'Updater tests failed' }
       - uses: msys2/setup-msys2@v2
@@ -141,9 +143,10 @@ jobs:
           code=$?
           set -e
           test "$code" = 21
-          cmake --build out/gpu --target gyro-aim-test gyro-pad-test
+          cmake --build out/gpu --target gyro-aim-test gyro-pad-test warmup-inbox-test
           out/gpu/gyro-aim-test.exe
           out/gpu/gyro-pad-test.exe
+          out/gpu/warmup-inbox-test.exe
       - name: Package
         env:
           MSYS2_ROOT: ${{ runner.temp }}/msys64
@@ -184,6 +187,8 @@ jobs:
           Upstream commit: $($info.upstream_commit)
           Source commit: $($info.commit)
           Credits: HayatoG and upstream contributors; BeastBoyyy for the DLC implementation. Original licenses and commit authorship are preserved.
+
+          Cache-loading A/B experiment: Graphics > GPU and shaders > Load shader cache on demand (experimental) is on by default. After first-start compilation, shaders load from the existing cache only when needed. Turn it off and restart to compare upstream's background import, keeping Load pipelines while playing on. No FPS improvement has been confirmed in gameplay yet. Shader compilation, saves and the shader cache format/key are unchanged by this experiment.
 
           No game files, DLC packages, firmware, player saves or personal settings are included.
           Uses upstream's Updates > Download and install implementation, with this fork's release feed to retain unmerged DLC/gyro support. Preserves the two-confirmed-backup preference and Latest release link. No separate updater feature PR. Update-inFAMOUS.cmd is retained for one-time migration/recovery from the old installer. A merge or test failure does not replace the previous published release.

@@ -1277,6 +1277,19 @@ bool PipelineCache::StartBackgroundWarmUp() {
             warm.build_cached = build_cached;
         }
     }
+    // Fork A/B experiment: restore the pre-PR227 first-use loading policy. GetProgram already
+    // loads cached SPIR-V on demand; this only avoids the additional whole-cache import.
+    // No shader code, cache format, or first-start precompilation changes. Explicit 0 restores
+    // upstream's background loading; a requested pipeline rebuild still takes precedence.
+    if (UseOnDemandShaderStages(warm.stages_only, warm.build_cached,
+                               std::getenv("TLG_LAZY_PROGRAMS"))) {
+        std::printf("Pipeline warm-up: none; programs load from the cache on first use "
+                    "(%zu programs on disk; on-demand cache experiment)\n",
+                    next_permutation.size());
+        delete background;
+        background = nullptr;
+        return true;
+    }
     warm.threads = WarmupThreadCount(std::max(1u, std::thread::hardware_concurrency()));
     warm.pool = std::make_unique<WarmupPool>(warm.threads, true);
     // The first job reads the whole store; with one thread the builds queue behind it.

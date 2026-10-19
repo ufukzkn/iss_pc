@@ -18,6 +18,18 @@ int main() {
     assert(!UseOnDemandPipelines(false, true, false));
     assert(!UseOnDemandPipelines(true, false, false));
     assert(!UseOnDemandPipelines(true, true, true));
+    // A precompiled cache can load on first use without changing the cached shader code.
+    assert(UseOnDemandShaderStages(true, false, nullptr));
+    assert(UseOnDemandShaderStages(true, false, "1"));
+    assert(UseOnDemandShaderStages(true, false, ""));
+    assert(!UseOnDemandShaderStages(true, false, "0"));
+    // Never bypass first-start preparation or a requested background pipeline rebuild.
+    const char* requests[]{nullptr, "0", "1"};
+    for (const char* request : requests) {
+        assert(!UseOnDemandShaderStages(false, false, request));
+        assert(!UseOnDemandShaderStages(false, true, request));
+        assert(!UseOnDemandShaderStages(true, true, request));
+    }
     assert(WarmupThreadCount(1) == 1 && WarmupThreadCount(2) == 1 && WarmupThreadCount(4) == 1);
     assert(WarmupThreadCount(6) == 4 && WarmupThreadCount(8) == 6 && WarmupThreadCount(32) == 6);
 

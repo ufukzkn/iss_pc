@@ -41,6 +41,25 @@ the updater scripts from the new release, not a stale copy from the old install.
 Updates > Check for updates > Download and install yeterli. Yeni motor HayatoG'den
 geliyor; DLC/gyro kaybolmasın diye paketler geçici olarak bu fork'tan indiriliyor.
 
+## Cache-loading experiment
+
+**Graphics > GPU and shaders > Load shader cache on demand (experimental)** is on
+by default in this fork. Once first-start compilation is complete, it restores the
+older first-use shader loading policy instead of importing the whole cache in the
+background. It is an A/B experiment for the reported FPS drop when loading ends,
+not a confirmed performance fix. First-start compilation and existing cache files
+are retained. This loading-policy change does not alter shader code or its cache key.
+
+For comparison, turn the option off and restart the game; keep **Load pipelines
+while playing** on to select upstream's background import. An explicit
+`ISS_LAZY_PROGRAMS=0` / `TLG_LAZY_PROGRAMS=0` also selects that behavior. An explicit
+`ISS_WARMUP_BUILD_CACHED=1` / `TLG_WARMUP_BUILD_CACHED=1` still requests a background
+pipeline rebuild. Leave graphics, LS, save and camera position unchanged for the test.
+
+**Türkçe:** Deneme seçeneği varsayılan açık. Graphics > GPU and shaders bölümünden
+kapatıp oyunu yeniden başlatarak önceki sürümle aynı cache yükleme davranışını
+karşılaştırabilirsin. İlk shader derlemesi kapanmaz; cache ve kayıtlar silinmez.
+
 ## Source/release provenance
 
 `FORK-BUILD.json` records `upstream_tag`, `upstream_commit` and the exact fork

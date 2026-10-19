@@ -16,6 +16,12 @@ inline bool UseOnDemandPipelines(bool binary_cache, bool supported, bool capture
     return binary_cache && supported && !capture_only;
 }
 
+/// Reuse the first-start cache without importing the whole game's shader stages at once.
+/// An unfinished cache and an explicit background pipeline rebuild keep the normal warm-up.
+inline bool UseOnDemandShaderStages(bool stages_only, bool build_cached, const char* request) {
+    return stages_only && !build_cached && (!request || *request != '0');
+}
+
 /// Warm-up threads: one on four cores or fewer, otherwise all but two, at most six.
 inline unsigned WarmupThreadCount(unsigned cores) {
     return cores <= 4 ? 1u : std::min(cores - 2, 6u);

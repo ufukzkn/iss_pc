@@ -22,7 +22,7 @@ for name in ('Update-inFAMOUS.ps1', 'Update-inFAMOUS.cmd'):
     entries[prefix + name] = (root / 'maintenance' / name).read_bytes()
 entries[prefix + 'FORK-README.md'] = (root / 'FORK-README.md').read_bytes()
 entries[prefix + 'VERSION'] = (info['version'] + '\n').encode()
-manifest = dict(info, schema=1, features=['dlc-unlockers', 'fps-menu-labels', 'gyro-aim', 'upstream-launcher-install'],
+manifest = dict(info, schema=1, features=['dlc-unlockers', 'fps-menu-labels', 'gyro-aim', 'upstream-launcher-install', 'shader-cache-on-demand'],
                 dlc_author='BeastBoyyy', dlc_pr='https://github.com/HayatoG/iss_pc/pull/249',
                 files={name[len(prefix):]: hashlib.sha256(data).hexdigest() for name, data in sorted(entries.items())})
 entries[prefix + 'FORK-BUILD.json'] = (json.dumps(manifest, indent=2) + '\n').encode()

@@ -467,6 +467,25 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual('restarts the game', row('TLG_STALE_READBACK')['tags'][0]['text'])
         self.assertEqual('in game', row('TLG_ASYNC_SHADERS')['tags'][0]['text'])
 
+    def test_on_demand_cache_toggle_persists_and_reaches_the_game(self):
+        item_id = 'TLG_LAZY_PROGRAMS'
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('ISS_LAZY_PROGRAMS', None)
+            os.environ.pop('TLG_LAZY_PROGRAMS', None)
+            row = self.graphics.model.get(item_id)
+            self.assertTrue(row['on'])
+            self.assertEqual('restarts the game', row['tags'][0]['text'])
+            self.graphics.setValue(item_id, '0')
+            self.assertIn('lazy_programs=0', self.ini_text())
+            self.assertEqual('0', logic.tlg_run.build_env(self.backend.settings)['ISS_LAZY_PROGRAMS'])
+            self.assertEqual('0', logic.tlg_run.experimental_states(self.backend.settings)[item_id])
+            self.graphics.applyPreset('balanced')
+            self.assertFalse(self.graphics.model.get(item_id)['on'])
+            self.graphics.setValue(item_id, '1')
+            self.assertNotIn('lazy_programs=', self.ini_text())
+            self.assertNotIn('ISS_LAZY_PROGRAMS', logic.tlg_run.build_env(self.backend.settings))
+            self.assertTrue(self.graphics.model.get(item_id)['on'])
+
     def test_settings_json_rows_write_the_same_keys_as_the_tk_launcher(self):
         self.graphics.setValue('s:display_mode', 'Borderless')
         self.graphics.setValue('s:vsync', '0')
