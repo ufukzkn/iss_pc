@@ -98,6 +98,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'Upstream merge routing test failed' }
           python -m unittest discover -s port/tests -p test_qt_support.py -v
           if ($LASTEXITCODE) { throw 'Release/controller tests failed' }
+          foreach ($test in @('test_import_addcont.py', 'test_updater.py', 'test_qt_updater.py', 'test_update_install.py', 'test_update_windows.py')) {
+            python -m unittest discover -s port/tests -p $test -v
+            if ($LASTEXITCODE) { throw "Upstream updater/import tests failed: $test" }
+          }
           python -m unittest discover -s port/tests -p test_qt_screens_a.py -v
           if ($LASTEXITCODE) { throw 'Controls/settings tests failed' }
           powershell.exe -NoProfile -File maintenance/test_updater.ps1
@@ -171,14 +175,15 @@ jobs:
           git push origin HEAD:main
           if ($LASTEXITCODE) { throw 'Cannot publish tested source' }
           $notes = @"
-          Windows build of HayatoG/iss_pc with BeastBoyyy's DLC unlocker support (upstream PR #249), the FPS menu label fix and a verified updater.
+          Windows build of HayatoG/iss_pc with BeastBoyyy's DLC unlocker support (upstream PR #249), optional gyro aiming (#279) and DLC setup metadata import (#321).
 
           Upstream release: $($info.upstream_tag)
+          Upstream commit: $($info.upstream_commit)
           Source commit: $($info.commit)
           Credits: HayatoG and upstream contributors; BeastBoyyy for the DLC implementation. Original licenses and commit authorship are preserved.
 
           No game files, DLC packages, firmware, player saves or personal settings are included.
-          Includes L2-held gyro aiming (off by default) and Updates > Fetch and install in the Qt launcher. The launcher verifies and backs up before restarting to finish the update. Update-inFAMOUS.cmd remains available as a fallback. A merge or test failure does not replace the previous published release.
+          Uses upstream's Updates > Download and install implementation, with this fork's release feed to retain unmerged DLC/gyro support. Preserves the two-confirmed-backup preference and Latest release link. No separate updater feature PR. Update-inFAMOUS.cmd is retained for one-time migration/recovery from the old installer. A merge or test failure does not replace the previous published release.
           "@
           $notes | Set-Content release-notes.md -Encoding utf8
           $existing = gh release view $info.version --json isDraft 2>$null
@@ -188,9 +193,9 @@ jobs:
             gh release create $info.version --draft --target $info.commit --title $info.version --notes-file release-notes.md
             if ($LASTEXITCODE) { throw 'Draft creation failed' }
           }
-          gh release upload $info.version port/dist/infamous-windows-x86_64.zip port/dist/infamous-windows-x86_64.zip.sha256 maintenance/Update-inFAMOUS.ps1 maintenance/Update-inFAMOUS.cmd --clobber
+          gh release upload $info.version port/dist/infamous-windows-x86_64.zip port/dist/infamous-windows-x86_64.zip.sha256 port/dist/SHA256SUMS maintenance/Update-inFAMOUS.ps1 maintenance/Update-inFAMOUS.cmd --clobber
           if ($LASTEXITCODE) { throw 'Draft upload failed' }
           $release = gh release view $info.version --json assets | ConvertFrom-Json
-          if ($LASTEXITCODE -or $release.assets.Count -ne 4) { throw 'Incomplete draft release; not publishing' }
+          if ($LASTEXITCODE -or $release.assets.Count -ne 5) { throw 'Incomplete draft release; not publishing' }
           gh release edit $info.version --draft=false --latest
           if ($LASTEXITCODE) { throw 'Publishing failed; draft remains unpublished' }

@@ -6,7 +6,6 @@ import json
 import os
 import re
 import socket
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from paths import ROOT
 sys.path.insert(0, str(ROOT / 'launcher'))
-from qt import logic, releases, report, installer  # noqa: E402
+from qt import logic, releases, report  # noqa: E402
 
 try:
     from qt.backend import Backend
@@ -28,27 +27,6 @@ except ImportError:
 
 STRINGS = json.loads((ROOT / 'launcher' / 'qt' / 'i18n' / 'strings.json').read_text(encoding='utf-8'))
 T = logic.Translator({'ui_language': 'en_US'}, STRINGS, {})
-
-
-class UpdateWorkerTests(unittest.TestCase):
-    def test_child_environment_is_independent_without_changing_parent(self):
-        with mock.patch.dict(os.environ, {'PSMODULEPATH': 'fixture-incompatible-ps7', 'ISS_TEST': 'kept'}):
-            result = installer.worker_environment()
-            self.assertNotIn('PSMODULEPATH', {key.upper() for key in result})
-            self.assertEqual(result['PYINSTALLER_RESET_ENVIRONMENT'], '1')
-            self.assertEqual(result['ISS_TEST'], 'kept')
-            self.assertEqual(os.environ['PSMODULEPATH'], 'fixture-incompatible-ps7')
-
-    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell regression')
-    def test_system_powershell_can_load_hash_command_from_python(self):
-        with mock.patch.dict(os.environ, {'PSMODULEPATH': str(Path(os.environ['SystemRoot']) / 'missing-ps7-modules')}):
-            child = installer.start_worker([installer.powershell(), '-NoProfile', '-Command',
-                '$ErrorActionPreference="Stop"; Get-Command Get-FileHash | Out-Null; Write-Output "hash-command-ok"'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW)
-            out, err = child.communicate(timeout=20)
-            self.assertEqual(child.returncode, 0, err)
-            self.assertIn('hash-command-ok', out)
 
 
 class RedactionTests(unittest.TestCase):
@@ -422,12 +400,12 @@ class FetchTests(unittest.TestCase):
 
     def test_one_get_with_user_agent_and_timeout_and_no_data(self):
         release = {'tag_name': 'v2026.10.15-61e8942', 'name': 'v2026.10.15', 'body': CI_BODY, 'published_at': '2026-10-15T10:00:00Z',
-                   'html_url': releases.RELEASE_PREFIX + 'tag/v2026.10.15-61e8942'}
+                   'html_url': 'https://github.com/ufukzkn/iss_pc/releases/tag/v2026.10.15-61e8942'}
         opener = self.opener(release)
         got = releases.fetch_latest('v2026.10.13-3f2a9c1', opener=opener)
         self.assertEqual(len(opener.calls), 1)
         request, timeout = opener.calls[0]
-        self.assertEqual(request.full_url, releases.API_URL)
+        self.assertEqual(request.full_url, 'https://api.github.com/repos/ufukzkn/iss_pc/releases/latest')
         self.assertEqual(request.get_method(), 'GET')
         self.assertIsNone(request.data)
         self.assertEqual(timeout, 10)
@@ -490,7 +468,7 @@ class ControllerTests(unittest.TestCase):
         self.logs.mkdir()
         (self.logs / 'run-1.log').write_text(LOG + 'C:\\Users\\Maria Silva\\x\n', encoding='utf-8')
         self.opened, self.copied, self.saved = [], [], []
-        self.release = {'tag': 'v2026.10.15-61e8942', 'url': releases.RELEASE_PREFIX + 'tag/v2026.10.15-61e8942',
+        self.release = {'tag': 'v2026.10.15-61e8942', 'url': 'https://github.com/ufukzkn/iss_pc/releases/tag/v2026.10.15-61e8942',
                         'body': CI_BODY, 'published': '2026-10-15'}
         self.fetch_calls = []
 
@@ -631,49 +609,7 @@ class ControllerTests(unittest.TestCase):
         self.updates.check()
         self.pump(lambda: not self.updates.checking)
         self.updates.download()
-        self.assertEqual(self.opened[-1], releases.RELEASES_URL)
-
-    def test_install_prepares_before_handoff_and_blocks_play(self):
-        events = []
-        def prepare(root, progress):
-            events.append('prepare')
-            progress('verify')
-            return {'version': self.release['tag']}
-        self.updates.probes.update(prepare_install=prepare,
-                                   apply_install=lambda data: events.append('apply'),
-                                   quit_install=lambda: events.append('quit'))
-        self.updates.check()
-        self.pump(lambda: not self.updates.checking)
-        self.assertTrue(self.updates.canInstall)
-        self.updates.install()
-        self.assertTrue(self.updates.installing)
-        self.assertFalse(self.backend.canPlay)
-        self.pump(lambda: 'quit' in events)
-        self.assertEqual(events, ['prepare', 'apply', 'quit'])
-
-    def test_failed_preparation_keeps_launcher_open_and_allows_retry(self):
-        events=[]
-        def fail(root, progress):
-            raise RuntimeError('fixture checksum mismatch')
-        self.updates.probes.update(prepare_install=fail, apply_install=lambda data: events.append('apply'),
-                                   quit_install=lambda: events.append('quit'))
-        self.updates.check()
-        self.pump(lambda: not self.updates.checking)
-        self.updates.install()
-        self.pump(lambda: not self.updates.installing)
-        self.assertEqual(events, [])
-        self.assertIn('fixture checksum mismatch', self.updates.statusText)
-        self.assertTrue(self.updates.canInstall)
-
-    def test_install_is_disabled_while_game_is_running(self):
-        self.updates.probes['prepare_install'] = lambda root, progress: self.fail('must not prepare')
-        self.updates.check()
-        self.pump(lambda: not self.updates.checking)
-        self.backend._play_state='running'
-        self.assertFalse(self.updates.canInstall)
-        self.assertIn('Close the game', self.updates.statusText)
-        self.updates.install()
-        self.assertFalse(self.updates.installing)
+        self.assertEqual(self.opened[-1], self.release['url'])
 
     def test_check_on_open_setting_is_saved_and_start_probes_honours_it(self):
         self.updates.setCheckOnOpen(True)

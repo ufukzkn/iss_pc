@@ -90,15 +90,6 @@ def run():
         if not image.isNull():
             colors = {image.pixel(x, y) for x in range(0, image.width(), 37) for y in range(0, image.height(), 29)}
             check(len(colors) > 3, 'the rendered frame is blank')
-        if os.name == 'nt':
-            import subprocess
-            from qt import installer
-            worker = installer.start_worker([installer.powershell(), '-NoProfile', '-Command',
-                '$ErrorActionPreference="Stop"; Get-Command Get-FileHash | Out-Null'],
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW)
-            _, error = worker.communicate(timeout=20)
-            check(worker.returncode == 0, 'system updater worker failed: ' + error.decode(errors='replace'))
         backend.shutdown()
     except Exception as error:
         check(False, f'the interface did not open: {error!r}')

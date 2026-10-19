@@ -1,33 +1,62 @@
-# DLC Windows fork
+# Windows fork with pending DLC and gyro support
 
-This is a convenience Windows build of [HayatoG/iss_pc](https://github.com/HayatoG/iss_pc), maintained in [ufukzkn/iss_pc](https://github.com/ufukzkn/iss_pc). It is an unofficial fork, not a new port.
+This unofficial build inherits [HayatoG/iss_pc](https://github.com/HayatoG/iss_pc).
+HayatoG and the upstream contributors created the native port. Original licenses,
+copyright notices and commit authorship are preserved.
 
-Credits: **HayatoG and the upstream contributors** created the native port. **BeastBoyyy** implemented DLC entitlement support in [upstream PR #249](https://github.com/HayatoG/iss_pc/pull/249), commit `d10332d27636ee42603c95a021ff1b1fa7086009`; that commit and its authorship are retained. This fork adds the missing 60 FPS menu label, a compile-time label/value count check, release integration and an updater. Original copyright notices and licenses are preserved; see `port/LICENSE` and the third-party licenses.
+- DLC runtime: **BeastBoyyy**, [PR #249](https://github.com/HayatoG/iss_pc/pull/249),
+  original commit `d10332d27636ee42603c95a021ff1b1fa7086009` retained in history.
+- Optional L2-held gyro aiming: [PR #279](https://github.com/HayatoG/iss_pc/pull/279).
+  Off by default; see `docs/GYRO_AIM.md`.
+- DLC metadata setup helper and guide: [PR #321](https://github.com/HayatoG/iss_pc/pull/321).
+  See `docs/DLC_SETUP.md`. Importing metadata alone does not provide runtime support.
+- Small FPS-menu label correction retained from the earlier fork.
 
-Optional L2-held native gyro aiming is tracked separately in [upstream draft PR #279](https://github.com/HayatoG/iss_pc/pull/279). It is off by default; enable it under Controls. See `docs/GYRO_AIM.md` for settings and limitations.
+## Updates
 
-## Windows: one click updates / tek tikla guncelleme
+Use the ordinary Qt launcher: **Updates > Check for updates > Download and install**.
+This is **upstream's updater implementation**, not a second updater feature.
+The **Latest release** button opens the release page without installing.
 
-Download a complete Windows package from **this fork's Releases**, then use `Update-inFAMOUS.cmd` inside the installation. For the existing local installation, the same two updater files can sit beside the `infamous-windows-x86_64` folder. The ordinary launcher shortcut and Play button continue to work.
+The release feed points to this fork while DLC/gyro patches are unmerged. Installing
+an official binary cannot retain code absent from that binary. The fork merges the
+latest official stable source release and rebuilds it with the retained patches.
+No game files, DLC packages, firmware, personal settings or saves are distributed.
 
-**Qt launcher:** open Updates, click Check for updates, then **Fetch and install** when a new version is available. The launcher stays open while the package is downloaded, verified and self-tested. It then exits briefly so its files can be replaced safely; a hidden worker backs up/applies (or rolls back) and reopens the launcher with the result. The script is copied to TEMP before the handoff, and the applying phase rechecks all prepared file hashes. No CMD window or manual command is needed. Close the game first. The command-line updater remains a recovery/fallback route.
+The upstream engine verifies the package, replaces manifest-owned program files in
+the same directory, journals the transaction and supports rollback. Saves, settings,
+mods and caches remain outside managed program files. Close the game first. The
+fork retains **two confirmed program snapshots**; unfinished/failed recovery data
+is not automatically deleted. Existing legacy backup folders are separate.
 
-PowerShell command (an explicit path is optional when using the standard folder layout):
+Local compatibility adjustment: a packaged installation below a project directory
+is allowed only with an existing package manifest; managed hashes are validated
+before replacement. An installation that is itself a Git checkout remains refused.
 
-```powershell
-powershell.exe -NoProfile -File .\Update-inFAMOUS.ps1 -InstallDir .\infamous-windows-x86_64
-```
+`Update-inFAMOUS.cmd`/`.ps1` are retained only for migration/recovery from older fork
+packages. The Qt UI no longer invokes PowerShell. To migrate an old package, use
+the updater scripts from the new release, not a stale copy from the old install.
 
-Add `-CheckOnly` to check without installing. Close the game and launchers before installing. The updater downloads only `ufukzkn/iss_pc` releases, verifies the archive SHA256 and every listed file, rejects unexpected/game/player files and escaping paths, and tests the staged launcher before changing the installed program. It backs up saves/settings and changed program files, preserves caches and unrelated files, verifies installed hashes, and restores program files if installation or the installed launcher's selftest fails. After a successful installation, only the last two successful update backups for that installation remain under `infamous-update-backups`; failed/incomplete transactions and unrelated folders are kept for recovery. Cleanup failures do not roll back a successful update. The Qt Updates page also has a **Latest release** button to open the release page without installing anything.
+**Türkçe:** Günlük kullanımda normal launcher'ı açıp Play'e bas. Güncelleme için
+Updates > Check for updates > Download and install yeterli. Yeni motor HayatoG'den
+geliyor; DLC/gyro kaybolmasın diye paketler geçici olarak bu fork'tan indiriliyor.
 
-**Turkce:** `Update-inFAMOUS.cmd` dosyasina cift tikla. Oyun ve launcher kapali olmali. Guncelleme once indirilip dogrulanir ve test edilir; sonra kayitlar/ayarlar ile degisecek program dosyalari yedeklenir. Hata olursa onceki program dosyalari geri yuklenir. Normal launcher kisayolunu kullanmaya devam edebilirsin. Resmi ZIP'i ustune acmak yerine bu guncelleyiciyi kullan; resmi pakette henuz bulunmayan DLC yamasi aksi halde kalkabilir.
+## Source/release provenance
 
-## Release maintenance
+`FORK-BUILD.json` records `upstream_tag`, `upstream_commit` and the exact fork
+`commit`. Fork and upstream commit hashes differ because the fork has extra commits.
+The upstream commit must be an ancestor of the fork commit; names alone are not
+proof. `package-files.json` is the upstream updater's owned-file manifest, regenerated
+after adding fork provenance so all hashes match the final package.
 
-`DLC Windows release` checks the latest **official stable release** every six hours (GitHub schedules can be delayed), on a push to this fork's `main`, or with Actions > Run workflow. It merges that release into a disposable checkout, verifies DLC/FPS features, runs Python/native DLC tests and updater recovery tests, builds Windows, and tests the actual package. Only a passing candidate is pushed to `main` and published. Merge conflicts stop the run for manual resolution. No custom PAT or external webhook is required. If DLC is merged upstream, the retained tests continue checking it; code refactors can require updating the feature guard.
+The Windows release workflow checks every six hours (GitHub schedules may be late),
+on a push to this fork's main, or on manual dispatch. It merges the latest official
+stable release into a disposable candidate, runs feature/metadata/updater tests,
+builds and self-tests the package, then publishes. Source conflicts stop publication.
+Main moving during a build also stops publication; the previous release stays intact.
 
-The original upstream Build workflow is retained but its jobs only run in HayatoG's repository. This fork's own workflow never sends Discord messages or deletes older releases. GitHub can disable inactive scheduled workflows; a manual run or subsequent repository activity can be needed.
-
-Upstream source is merged normally, but this fork keeps its own `.github/workflows` directory. Importing new upstream Actions files would require a workflow-write PAT, and they are not needed for this fork's Windows release pipeline. Source conflicts still stop publication for manual resolution.
-
-Build/launcher tests do not guarantee mission-level DLC behavior or game performance. No game, DLC, firmware, personal paths, saves or settings are distributed. The player supplies the base game and owned DLC metadata separately, as documented upstream.
+The fork retains its own Actions routing and never sends upstream Discord messages
+or deletes older releases. Upstream source is merged normally; upstream workflow
+changes require deliberate review. The separate upstream PR branches contain no
+fork release feed or publishing automation. Build tests do not prove mission-level
+DLC behavior, aiming feel or performance on every machine.

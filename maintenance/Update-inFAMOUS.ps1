@@ -93,6 +93,11 @@ function Read-VerifiedPayload([string]$payload) {
         $manifest.commit -notmatch '^[a-f0-9]{40}$') { throw 'Package is not the expected DLC-enabled fork build' }
     $expected = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $null = $expected.Add('FORK-BUILD.json')
+    # Migration to upstream's manifest installer: the archive digest authenticates
+    # this manifest; all program bytes remain checked by the legacy file list.
+    if (Test-Path -LiteralPath (Join-Path $payload 'package-files.json')) {
+        $null = $expected.Add('package-files.json')
+    }
     foreach ($property in $manifest.files.PSObject.Properties) {
         $relative = $property.Name
         $file = Get-ChildPath $payload $relative
