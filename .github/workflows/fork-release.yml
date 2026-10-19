@@ -88,6 +88,9 @@ jobs:
         shell: pwsh
         working-directory: .
         run: |
+          # Avoid runneradmin's 8.3 TEMP alias in upstream path-string assertions.
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
           python -m pip install --disable-pip-version-check PySide6-Essentials
           if ($LASTEXITCODE) { throw 'Qt test dependencies failed' }
           python maintenance/verify_features.py
