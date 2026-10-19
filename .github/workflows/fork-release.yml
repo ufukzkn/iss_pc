@@ -143,10 +143,11 @@ jobs:
           code=$?
           set -e
           test "$code" = 21
-          cmake --build out/gpu --target gyro-aim-test gyro-pad-test warmup-inbox-test
+          cmake --build out/gpu --target gyro-aim-test gyro-pad-test warmup-inbox-test graphics-settings-test
           out/gpu/gyro-aim-test.exe
           out/gpu/gyro-pad-test.exe
           out/gpu/warmup-inbox-test.exe
+          out/gpu/graphics-settings-test.exe
       - name: Package
         env:
           MSYS2_ROOT: ${{ runner.temp }}/msys64
@@ -189,6 +190,8 @@ jobs:
           Credits: HayatoG and upstream contributors; BeastBoyyy for the DLC implementation. Original licenses and commit authorship are preserved.
 
           Cache-loading A/B experiment: Graphics > GPU and shaders > Load shader cache on demand (experimental) is on by default. After first-start compilation, shaders load from the existing cache only when needed. Turn it off and restart to compare upstream's background import, keeping Load pipelines while playing on. No FPS improvement has been confirmed in gameplay yet. Shader compilation, saves and the shader cache format/key are unchanged by this experiment.
+
+          Free-look stick sensitivity: Controls > Controller in the launcher, or Insert > Controls > Controller camera in game. Defaults to 1.00x; try 1.35-1.50x for a more responsive physical right stick while roaming. Applies live and bypasses L2 aiming, gyro, mouse and graffiti. Reaches full stick input sooner; does not increase the game's maximum turn speed.
 
           No game files, DLC packages, firmware, player saves or personal settings are included.
           Uses upstream's Updates > Download and install implementation, with this fork's release feed to retain unmerged DLC/gyro support. Preserves the two-confirmed-backup preference and Latest release link. No separate updater feature PR. Update-inFAMOUS.cmd is retained for one-time migration/recovery from the old installer. A merge or test failure does not replace the previous published release.

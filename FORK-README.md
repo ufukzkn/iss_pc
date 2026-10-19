@@ -41,6 +41,17 @@ the updater scripts from the new release, not a stale copy from the old install.
 Updates > Check for updates > Download and install yeterli. Yeni motor HayatoG'den
 geliyor; DLC/gyro kaybolmasın diye paketler geçici olarak bu fork'tan indiriliyor.
 
+## Free-look stick sensitivity
+
+**Controls > Controller > Free-look stick sensitivity** in the launcher and
+**Insert > Controls > Controller camera** in game share a live `tlg.ini` setting.
+Default **1.00x** preserves physical stick input exactly; try **1.35-1.50x** for
+quicker small/medium right-stick movements while roaming. L2 aiming, gyro, mouse,
+left stick and graffiti keep their own response. This gain reaches full stick
+input sooner; it cannot raise the game's maximum camera turn speed. No smoothing,
+frame queue or waiting is added. Range: 0.25-3.00x; optional environment override:
+`ISS_STICK_LOOK_SENS` / `TLG_STICK_LOOK_SENS`.
+
 ## Cache-loading experiment
 
 **Graphics > GPU and shaders > Load shader cache on demand (experimental)** is on

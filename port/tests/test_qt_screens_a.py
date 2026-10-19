@@ -686,6 +686,18 @@ class ControllerTests(unittest.TestCase):
         self.controls.setValue('m:mouse_invert_y', '0')
         self.assertNotIn('mouse_', self.ini_text())
 
+    def test_free_look_stick_gain_is_live_and_independent_of_gyro(self):
+        item_id = 'menu:stick_look_sensitivity'
+        row = self.controls.pad_model.get(item_id)
+        self.assertEqual(1.0, row['value'])
+        self.assertEqual('in game', row['tags'][0]['text'])
+        self.assertFalse(row['disabled'])
+        self.controls.setValue(item_id, '1.35')
+        self.assertIn('stick_look_sensitivity=1.35', self.ini_text())
+        self.assertFalse(self.controls.pad_model.get('menu:gyro_aim')['on'])
+        self.controls.setValue(item_id, '1')
+        self.assertNotIn('stick_look_sensitivity=', self.ini_text())
+
     def test_gyro_controls_are_opt_in_and_roundtrip_without_changing_graffiti(self):
         self.assertFalse(self.controls.pad_model.get('menu:gyro_aim')['on'])
         self.assertTrue(self.controls.pad_model.get('menu:gyro_sensitivity')['disabled'])

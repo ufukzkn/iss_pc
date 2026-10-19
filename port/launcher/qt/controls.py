@@ -63,6 +63,12 @@ class Controls(QObject):
         rows = [self._row('c:stick_deadzone', self.t('deadzone'), self.t('deadzone_hint'), 'slider', False,
                           zone != tlg_run.DEFAULT_SETTINGS['stick_deadzone'], lo=0, hi=40, step=1, unit='%',
                           value=zone, valueText=f'{zone}%')]
+        item = gfxlogic.item_by_id('menu:stick_look_sensitivity')
+        value = float(backports_table.effective(item, self.backend.fix_states))
+        rows.append(self._row(item.id, self.backend.t_.pair(item.name), self.backend.t_.pair(item.what),
+                              'slider', True, self.backend.fix_states.get(item.id) is not None,
+                              lo=item.lo, hi=item.hi, step=0.05, unit='x', value=value,
+                              valueText=f'{value:.2f}x', decimals=2))
         item = gfxlogic.item_by_id('menu:sensor_aim')
         value = int(backports_table.effective(item, self.backend.fix_states))
         rows.append(self._row(item.id, self.backend.t_.pair(item.name), self.backend.t_.pair(item.what), 'slider',

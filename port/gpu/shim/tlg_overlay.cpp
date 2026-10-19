@@ -572,6 +572,14 @@ void OpenGuide(); // the graffiti guide (below, with the save dialogs)
 
 void ControlsTab() {
     auto& s = TlgSettings::Get();
+    ImGui::SeparatorText(TL("Controller camera", "Camera do controle"));
+    if (BeginRows("##stick_look")) {
+        FloatRow(TL("Free-look stick sensitivity", "Sensibilidade do analogico da camera"),
+                 s.stick_look_sensitivity, 0.25f, 3.0f, "%.2fx",
+                 TL("Physical right stick while L2 is released. Try 1.35-1.50x. Reaches full input sooner; does not raise the game's maximum turn speed. Gyro, mouse and graffiti are unchanged.",
+                    "Analogico direito fisico sem L2. Experimente 1,35-1,50x. Atinge a entrada maxima antes; nao aumenta a velocidade maxima da camera. Giroscopio, mouse e grafite nao mudam."));
+        ImGui::EndTable();
+    }
     ImGui::SeparatorText(TL("Gyro aiming", "Mira por giroscopio"));
     if (BeginRows("##gyroaim")) {
         CheckRow(TL("Gyro while holding L2", "Giroscopio ao segurar L2"), s.gyro_aim,

@@ -502,6 +502,7 @@ extern "C" void tlggpu_input_settings(TlgGpuInputSettings* out) {
     out->gyro_smoothing = s.gyro_smoothing;
     out->gyro_noise = s.gyro_noise;
     out->gyro_deadzone = s.gyro_deadzone;
+    out->stick_look_sensitivity = s.stick_look_sensitivity;
 }
 
 extern "C" void tlggpu_mouse_pad_hud(int active, float x, float y, int touching, int clicking) {

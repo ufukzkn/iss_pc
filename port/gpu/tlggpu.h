@@ -89,7 +89,7 @@ typedef struct {
     int32_t captured;
 } TlgGpuMouse;
 void tlggpu_mouse_take(TlgGpuMouse *mouse);
-/* Mouse and keyboard settings (tlg.ini; the menu changes the mouse ones live). key_map: the
+/* Controller, gyro, mouse and keyboard settings (tlg.ini; menu adjustments are live). key_map: the
  * tlg.ini key_map value, the TLG_KEY_MAP syntax (runtime_pad.c), read once at start. */
 typedef struct {
     int32_t mouse_enabled, invert_y;
@@ -97,6 +97,7 @@ typedef struct {
     char key_map[512];
     int32_t gyro_aim, gyro_invert_y, gyro_focused;
     float gyro_sensitivity, gyro_smoothing, gyro_noise, gyro_deadzone;
+    float stick_look_sensitivity;
 } TlgGpuInputSettings;
 void tlggpu_input_settings(TlgGpuInputSettings *settings);
 /* Touchpad mode of the mouse (runtime_pad.c): while active, a small touchpad with the virtual

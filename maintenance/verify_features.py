@@ -8,7 +8,7 @@ checks = {
     'port/src/probe.c': ('G3CONT02', 'runtime_content_set_addons'),
     'port/src/runtime_content.c': ('runtime_content_set_addons',),
     'port/launcher/infamous_run.py': ('ISS_ADDCONT_DIR',),
-    'port/src/runtime_pad.c': ('sample_gyro_aim',),
+    'port/src/runtime_pad.c': ('sample_gyro_aim', 'stick_look_axis'),
     'port/launcher/qt/updates.py': ('canInstall', 'update_install.prepare'),
     'port/launcher/update_install.py': ('write_manifest', 'install_lock'),
     'port/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp': ('UseOnDemandShaderStages', '"TLG_LAZY_PROGRAMS"'),

@@ -149,6 +149,8 @@ struct Values {
     // the mouse turns the camera (right stick). Live from the menu.
     std::atomic<bool> mouse_enabled{true}, mouse_invert_y{false};
     std::atomic<float> mouse_sensitivity{1.0f}, mouse_smoothing{0.5f}, mouse_accel{0.0f}, mouse_deadzone{0.1f};
+    // Physical right-stick gain outside L2 aiming; live, before mouse and gyro composition.
+    std::atomic<float> stick_look_sensitivity{1.0f};
     // Opt-in real gyro -> right stick, only while L2 is held; independent of graffiti motion.
     std::atomic<bool> gyro_aim{false}, gyro_invert_y{false};
     std::atomic<float> gyro_sensitivity{2.5f}, gyro_smoothing{0.025f}, gyro_noise{0.01f}, gyro_deadzone{0.1f};

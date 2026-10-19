@@ -30,6 +30,14 @@ static PadData read_sample(float pitch,float yaw,float roll) {
 }
 
 int main(void) {
+    for (int value=0;value<256;++value) {
+        assert(stick_look_axis((uint8_t)value,1)==value);
+        assert(stick_look_axis((uint8_t)value,0)==value); /* older/no-GPU settings */
+        assert(stick_look_axis((uint8_t)value,NAN)==value);
+    }
+    assert(stick_look_axis(128,3)==128);
+    assert(stick_look_axis(127,1.5f)==126 && stick_look_axis(129,1.5f)==130);
+    assert(stick_look_axis(0,3)==0 && stick_look_axis(255,3)==255);
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT,"0x1d50/0x6190");
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER,"dummy");
@@ -92,6 +100,24 @@ int main(void) {
     assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,-32768));
     d=read_sample(1,1,0);
     assert(d.right_x==255 && d.right_y==128); /* release keeps the physical stick, removes gyro */
+    /* Free-look gain affects the physical stick before gyro/mouse composition, never L2 aim. */
+    input.gyro_aim=0;
+    assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_RIGHTX,16384));
+    assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_LEFTX,16384));
+    input.stick_look_sensitivity=1;
+    const PadData original=read_sample(0,0,0);
+    input.stick_look_sensitivity=1.5f;
+    d=read_sample(0,0,0);
+    assert(d.right_x>original.right_x && d.left_x==original.left_x);
+    assert(d.right_y==128 && d.l2==original.l2 && d.r2==original.r2);
+    assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,32767));
+    d=read_sample(0,0,0);
+    assert(d.right_x==original.right_x); /* held L2 bypasses free-look gain */
+    assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,-32768));
+    input.stick_look_sensitivity=1;
+    d=read_sample(0,0,0);
+    assert(d.right_x==original.right_x); /* live reset */
+    input.gyro_aim=1;
     assert(SDL_DetachVirtualJoystick(id));
     SDL_UpdateGamepads();
     sample_host(&d);
