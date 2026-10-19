@@ -22,9 +22,11 @@ ApplicationWindow {
             contentItem: Item {
                 implicitHeight: 8
                 Rectangle {
+                    property real pulse: 1
                     width: parent.width * (bar.indeterminate ? 0.22 : bar.position)
                     height: parent.height; radius: 4; color: "#ff9c45"
-                    SequentialAnimation on opacity {
+                    opacity: bar.indeterminate ? pulse : 1
+                    SequentialAnimation on pulse {
                         running: bar.indeterminate; loops: Animation.Infinite
                         NumberAnimation { from: 0.3; to: 1; duration: 650 }
                         NumberAnimation { from: 1; to: 0.3; duration: 650 }

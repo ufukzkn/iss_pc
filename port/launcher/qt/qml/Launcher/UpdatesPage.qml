@@ -71,9 +71,11 @@ Item {
                             contentItem: Item {
                                 implicitHeight: 6
                                 Rectangle {
+                                    property real pulse: 1
                                     width: parent.width * (progressBar.indeterminate ? 0.22 : progressBar.position)
                                     height: parent.height; radius: 3; color: Theme.warn
-                                    SequentialAnimation on opacity {
+                                    opacity: progressBar.indeterminate ? pulse : 1
+                                    SequentialAnimation on pulse {
                                         running: progressBar.indeterminate; loops: Animation.Infinite
                                         NumberAnimation { from: 0.3; to: 1; duration: 650 }
                                         NumberAnimation { from: 1; to: 0.3; duration: 650 }
