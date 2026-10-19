@@ -211,8 +211,7 @@ class Updates(QObject):
                 or (live and update_install.game_running()))
 
     def _in_checkout(self):
-        port = self.port_dir()
-        return any((p / '.git').exists() for p in (port, *port.parents))
+        return update_install.source_checkout(self.port_dir())
 
     @Property(bool, notify=changed)
     def packaged(self):

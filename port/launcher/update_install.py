@@ -141,12 +141,17 @@ def _check_payload(stage, protected=()):
     return manifest, entries
 
 
-def prepare(stage, target, release_tag, exe_name='inFAMOUS Second Son.exe', protected=()):
-    stage, target = Path(stage).resolve(), Path(target).resolve()
+def source_checkout(target):
+    target = Path(target).resolve()
     # A verified packaged installation may live inside an unrelated project.
     # The old manifest and every managed hash are validated below before writing.
-    if (target / '.git').exists() or (not (target / MANIFEST).is_file()
-            and any((p / '.git').exists() for p in target.parents)):
+    return (target / '.git').exists() or (not (target / MANIFEST).is_file()
+            and any((p / '.git').exists() for p in target.parents))
+
+
+def prepare(stage, target, release_tag, exe_name='inFAMOUS Second Son.exe', protected=()):
+    stage, target = Path(stage).resolve(), Path(target).resolve()
+    if source_checkout(target):
         raise InstallError('source', target)
     if not target.is_dir() or not (target / exe_name).is_file() or stage.is_relative_to(target):
         raise InstallError('archive', 'invalid source or destination')
