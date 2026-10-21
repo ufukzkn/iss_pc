@@ -448,7 +448,7 @@ class Saves(QObject):
             self.fail(error)
             return
         self.reload()
-        self.say(self.t('saves_duplicated', slot=new.split('/', 1)[1]), 'good')
+        self.say(self.t('saves_duplicated', slot=new.rsplit('/', 1)[1]), 'good')
 
     @Slot(str)
     def askDelete(self, slot_id):
