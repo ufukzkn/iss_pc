@@ -10,6 +10,9 @@ copyright notices and commit authorship are preserved.
   Off by default; see `docs/GYRO_AIM.md`.
 - DLC metadata setup helper and guide: [PR #321](https://github.com/HayatoG/iss_pc/pull/321).
   See `docs/DLC_SETUP.md`. Importing metadata alone does not provide runtime support.
+- Upstream's newer `<data folder>/dlc` scan also works: its entitlement labels and
+  the existing content-profile labels are deduplicated into the same bounded
+  AppContent provider, so enumeration and individual lookups stay consistent.
 - Small FPS-menu label correction retained from the earlier fork.
 
 ## Updates

@@ -500,6 +500,9 @@ class Backend(QObject):
             QTimer.singleShot(CLOSE_DELAY_MS, self._quit_app)
 
     def _quit_app(self):
+        process = self.process
+        if self.settings.get('reopen_launcher', True) and process is not None and process.poll() is None:
+            tlg_run.reopen_after(process.pid)
         app = QCoreApplication.instance()
         if app is None:
             return
@@ -626,7 +629,7 @@ class Backend(QObject):
 
     @Property('QVariantList', notify=profileChanged)
     def occlusionOptions(self):
-        """The four values of the "Light glare (occlusion)" selector on the Home screen."""
+        """The values of the "Light glare (occlusion)" selector on the Home screen."""
         item = self._occlusion_item()
         value = backports_table.effective(item, self.fix_states)
         return [{'value': v, 'label': self.t_.pair((en, pt)), 'on': v == value} for v, en, pt in item.choices]

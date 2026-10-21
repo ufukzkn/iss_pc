@@ -1,6 +1,7 @@
 /* Offline AppContent provider for the configured base-game profile.
  * No package/DLC mounting, downloads or license emulation. Add-ons the player owns as unlockers
- * (no data, inFAMOUS Second Son's DLC) come from the content profile and are reported installed. */
+ * (no data, inFAMOUS Second Son's DLC) come from the content profile and the upstream launcher's
+ * TLG_ADDCONT_LABELS scan. Both sources use the same bounded list/query provider. */
 #include "runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,12 +63,38 @@ static void require_loaded(void) {
     require_provider();
     if (!refs) { fputs("STOP: AppContent called before module load\n",stderr); exit(21); }
 }
+/* Keep the fork's mounted-metadata path and upstream's data/dlc scan compatible.
+ * Validate and deduplicate into a temporary list, so an overflow changes nothing. */
+static int merge_environment_addons(void) {
+    char merged[RUNTIME_ADDCONT_MAX][17];
+    uint32_t count=addon_count;
+    memcpy(merged,addons,sizeof(merged));
+    for (const char *p=getenv("TLG_ADDCONT_LABELS");p && *p;) {
+        const char *end=strchr(p,',');
+        size_t size=end ? (size_t)(end-p) : strlen(p);
+        int valid=size==16;
+        for (size_t i=0;valid && i<size;++i)
+            valid=(p[i]>='A' && p[i]<='Z') || (p[i]>='a' && p[i]<='z') || (p[i]>='0' && p[i]<='9');
+        if (valid) {
+            uint32_t i=0;
+            while (i<count && memcmp(merged[i],p,16)) ++i;
+            if (i==count) {
+                if (count==RUNTIME_ADDCONT_MAX) return 0;
+                memcpy(merged[count],p,16); merged[count][16]=0; ++count;
+            }
+        }
+        p=end ? end+1 : NULL;
+    }
+    memcpy(addons,merged,sizeof(addons)); addon_count=count;
+    return 1;
+}
 static ABI int32_t content_init(const unsigned char *init,unsigned char *boot) {
     require_loaded();
     if (!init || !boot) return PARAMETER;
     if (initialized) return BUSY;
     /* Only the reserved-zero init profile is implemented. */
     for (unsigned i=0;i<32;++i) if (init[i]) return PARAMETER;
+    if (!merge_environment_addons()) return PARAMETER;
     memset(boot,0,40); initialized=1;
     printf("Runtime: AppContent initialized; offline base-game profile, %u installed add-ons without data\n",addon_count);
     return 0;

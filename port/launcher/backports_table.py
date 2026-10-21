@@ -16,8 +16,11 @@ probe copies ISS_X to TLG_X, like the rest of the launcher); the menu keys are r
 by the game itself. A switch the player never touched changes nothing.
 All values are strings, as in the ini: '0'/'1' for on/off.
 """
+import os
 from collections import namedtuple
 from pathlib import Path
+
+_WINDOWS = os.name == 'nt'
 
 # group: 'menu' | 'bp' | 'ab'.  vtype: 'bool' | 'choice' | 'int' | 'float'.
 # default: '0'/'1' (bool) or the value text; None = automatic (the GPU backend decides per driver).
@@ -48,7 +51,8 @@ def _ab(key, env, default, shader, live, name, what, store='ini', pass_env=True,
 
 
 def _ab_choice(key, env, default, choices, name, what, **kw):
-    return _make(env, 'ab', key, env, 'choice', default, name, what, choices=choices, pass_env=True, **kw)
+    kw.setdefault('pass_env', True)
+    return _make(env, 'ab', key, env, 'choice', default, name, what, choices=choices, **kw)
 
 
 def _menu(tab, key, vtype, default, name, what, **kw):
@@ -232,6 +236,9 @@ DIAGNOSTICS = [
     _ab('rfl_all', 'TLG_RFL_ALL', False, True, False, ('ReadFirstLane in every wide shader', 'ReadFirstLane em todo shader largo'),
         ('Experiment: lowers v_readfirstlane in every wide compute shader (two extra barriers each).',
          'Experimento: reescreve o v_readfirstlane em todo shader de compute largo (duas barreiras a mais cada).')),
+    _ab('dynamic_stride', 'TLG_DYNAMIC_STRIDE', True, True, False, ('Compute buffer strides at run time', 'Stride dos buffers de compute em tempo de execução'),
+        ('Compute shaders read each buffer\'s stride from the GPU descriptor instead of compiling it in, so one compiled shader serves every stride. Stops the GPU smoke from flickering (#7, #50).',
+         'Os shaders de compute leem o stride de cada buffer do descritor da GPU em vez de compilá-lo, então um shader compilado serve para todos os strides. Acaba com a fumaça da GPU piscando (#7, #50).')),
     _ab('block1d', 'TLG_BLOCK1D', None, True, False, ('BC 1D textures as 2D', 'Texturas BC 1D como 2D'),
         ('Block-compressed 1D textures as 2D images. Automatic: on for drivers that refuse them, except NVIDIA.',
          'Texturas 1D comprimidas como imagens 2D. Automático: ligado nos drivers que as recusam, exceto NVIDIA.')),
@@ -267,18 +274,59 @@ DIAGNOSTICS = [
         ('Still crashes the game on the NVIDIA 595 driver; off by default in this port.',
          'Ainda derruba o jogo no driver NVIDIA 595; desligado por padrão neste port.'),
         broken=True),
-    _ab_choice('occlusion_mode', 'TLG_OCCLUSION_MODE', '3',
+    # Windows default: renderer v2 with its native passes (RTX 3060 + Ryzen 5 5500 / 4600G, 2026-10-21:
+    # 11-20 FPS in gameplay with the previous v2 defaults, ~40-45 FPS with native passes and
+    # gpu_v2/defaults.env's unified memory off). Linux keeps this port's renderer: native passes
+    # crash NVIDIA's Linux driver.
+    _ab_choice('renderer', 'TLG_RENDERER', '2' if _WINDOWS else '1',
+               (('1', '1 · This port\'s renderer', '1 · Renderer deste port'),
+                ('2', '2 · Renderer v2 (experimental)', '2 · Renderer v2 (experimental)')),
+               ('Renderer', 'Renderer'),
+               ('Renderer v2 (port/gpu_v2): another renderer with this port\'s interface, its own fixes and '
+                'its own shader cache (the first start compiles the shaders again). The default on Windows. '
+                'Needs the v2 build (TLG_RENDERER_V2=1 build.sh); without it the game starts with this '
+                'port\'s renderer.',
+                'Renderer v2 (port/gpu_v2): outro renderer com a interface deste port, as próprias correções e '
+                'o próprio cache de shaders (a primeira partida compila os shaders de novo). O padrão no '
+                'Windows. Precisa do build v2 (TLG_RENDERER_V2=1 build.sh); sem ele o jogo abre com o '
+                'renderer deste port.'),
+               source='launcher (infamous_run.py)', pass_env=False),
+    _ab('native_passes', 'TLG_NATIVE_PASSES', _WINDOWS, False, False,
+        ('Native passes (renderer v2 only)', 'Native passes (só no renderer v2)'),
+        ('Renderer v2 records the game\'s draws straight into Vulkan when the game submits them. On by '
+         'default on Windows; off on Linux, where NVIDIA\'s driver can drop frames or crash with them. '
+         'Has no effect on this port\'s renderer.',
+         'O renderer v2 grava os desenhos do jogo direto no Vulkan quando o jogo os envia. Ligado por '
+         'padrão no Windows; desligado no Linux, onde o driver NVIDIA pode derrubar quadros ou travar. '
+         'Não tem efeito no renderer deste port.'),
+        pass_env=False),
+    # Windows default off: with it on, the game's fences wait for the GPU ~28 times a frame (11-20 FPS
+    # in gameplay, RTX 3060 + Ryzen 5 5500, 2026-10-21). Castlesea's release has it on but its heap
+    # range never matches there, so it measures without it.
+    _ab('v2_unified_memory', 'ISS_UNIFIED_MEMORY', not _WINDOWS, False, False,
+        ('Unified memory (renderer v2 only)', 'Memória unificada (só no renderer v2)'),
+        ('Renderer v2 shares the game\'s per-frame heap with the GPU, as on the PS4, so the game waits for '
+         'the GPU to finish before it reuses that memory. Off by default on Windows, where it held the game '
+         'at 11-20 FPS; on on Linux. Has no effect on this port\'s renderer.',
+         'O renderer v2 compartilha com a GPU o heap de dados por quadro do jogo, como no PS4, e o jogo '
+         'espera a GPU terminar antes de reusar essa memória. Desligado por padrão no Windows, onde segurava '
+         'o jogo em 11-20 FPS; ligado no Linux. Não tem efeito no renderer deste port.'),
+        pass_env=False),
+    _ab_choice('occlusion_mode', 'TLG_OCCLUSION_MODE', '4',
                (('0', '0 · As before (fake counter, glare may show through)', '0 · Como antes (contador falso, o brilho pode atravessar)'),
                 ('1', '1 · Lights count as hidden', '1 · Luzes contam como tapadas'),
                 ('2', '2 · Lights count as fully visible', '2 · Luzes contam como totalmente visíveis'),
-                ('3', '3 · Zero counts (recommended)', '3 · Contagem zero (recomendado)')),
+                ('3', '3 · Zero counts (previous default)', '3 · Contagem zero (padrão anterior)'),
+                ('4', '4 · Real occlusion, counted by the GPU (recommended)', '4 · Oclusão real, contada pela GPU (recomendado)')),
                ('Occlusion query (diagnostic)', 'Consulta de oclusão (diagnóstico)'),
                ('Test for the headlight glow that shows through characters and flickers: the counter the game '
                 'reads to know how much of a light is visible is a fake one. 1 = nothing visible, 2 = everything '
-                'visible, 3 = zero counts; 0 is the old behaviour; 3 is the default. Send the log and a screenshot of each mode.',
+                'visible, 3 = zero counts, 4 = real occlusion counted by the GPU (the default); 0 is the old behaviour. '
+                'Send the log and a screenshot of each mode.',
                 'Teste do brilho dos faróis que atravessa personagens e pisca: o contador que o jogo lê para saber '
                 'quanto de uma luz está visível é falso. 1 = nada visível, 2 = tudo visível, 3 = contagem zero; '
-                '0 é o comportamento antigo; 3 é o padrão. Mande o log e uma captura de cada modo.'),
+                '4 = oclusão real contada pela GPU (o padrão); 0 é o comportamento antigo. '
+                'Mande o log e uma captura de cada modo.'),
                source='diagnóstico (liverpool.cpp ZPASS_DONE)'),
     _ab('verbose_log', 'TLG_VERBOSE_LOG', False, False, False, ('Detailed log (for bug reports)', 'Log detalhado (para relatórios de problema)'),
         ('Turns on every safe trace switch, the GPU log at debug level, timestamps and thread ids on GPU lines, and extra '

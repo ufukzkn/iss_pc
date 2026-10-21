@@ -20,6 +20,22 @@ int main(int argc,char **argv) {
     if (argc>1 && !strcmp(argv[1],"--missing")) { load(0xb4); return 99; }
     const uint32_t profile[]={1,13,0x80000000,0,7};
     runtime_content_configure(profile);
+    if (argc>1 && !strcmp(argv[1],"--environment-addons")) {
+        /* An upstream data/dlc scan adds one label and repeats a profile label.
+         * A malformed entry is ignored, and both lookup and enumeration agree. */
+        typedef int32_t (ABI *Get)(uint32_t,const char *,void *);
+        Get get=GET(Get,"m47juOmH0VE#libSceAppContent");
+        runtime_content_set_addons("UNLOCKCOLEJACKET",1);
+        unsigned char boot[40]={0}, init_param[32]={0}, info[24]={0};
+        assert(load(0xb4)==0 && init(init_param,boot)==0);
+        uint32_t hits=0;
+        assert(list(0,NULL,0,&hits)==0 && hits==2);
+        assert(get(0,"UNLOCKCOLEJACKET",info)==0);
+        assert(get(0,"UNLOCKVESTJOS000",info)==0);
+        assert(get(0,"NOTINSTALLED0000",info)==(int32_t)0x80d90005);
+        puts("Profile and upstream environment add-ons share one provider");
+        return 0;
+    }
     if (argc>1 && !strcmp(argv[1],"--addons")) {
         /* Installed unlockers from the profile (G3CONT02): listed and looked up by label. */
         typedef int32_t (ABI *Get)(uint32_t,const char *,void *);

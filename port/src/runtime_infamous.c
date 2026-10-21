@@ -4,6 +4,7 @@
  * download, networking calls that succeed without a network (add-ons: runtime_content.c). */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "runtime.h"
 

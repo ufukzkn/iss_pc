@@ -427,8 +427,11 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(self.error_kind(error=urllib.error.URLError(socket.timeout())), 'timeout')
         self.assertEqual(self.error_kind(error=socket.timeout()), 'timeout')
         self.assertEqual(self.error_kind(error=ConnectionResetError()), 'offline')
-        for code, kind in ((404, 'none'), (403, 'limit'), (429, 'limit'), (500, 'http')):
-            self.assertEqual(self.error_kind(error=urllib.error.HTTPError('u', code, 'x', {}, None)), kind)
+        # a 403 is the rate limit only when GitHub says so (X-RateLimit-Remaining 0 or Retry-After)
+        limited = {'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '1792559606'}
+        for code, headers, kind in ((404, {}, 'none'), (403, limited, 'limit'), (403, {'Retry-After': '60'}, 'limit'),
+                                    (403, {}, 'http'), (429, {}, 'limit'), (500, {}, 'http')):
+            self.assertEqual(self.error_kind(error=urllib.error.HTTPError('u', code, 'x', headers, None)), kind)
         self.assertEqual(self.error_kind(payload=b'<html>not json</html>'), 'bad')
         self.assertEqual(self.error_kind(payload={'no': 'tag'}), 'bad')
 
