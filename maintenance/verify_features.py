@@ -13,6 +13,8 @@ checks = {
     'port/launcher/update_install.py': ('write_manifest', 'install_lock'),
     'port/launcher/qt/update_progress.py': ('UpdateProgress', 'show_errors=False'),
     'port/launcher/qt/qml/UpdateProgress.qml': ('updateJob.timing', 'updateJob.countText'),
+    '.github/workflows/fork-release.yml': ('TLG_RENDERER_V2=1 bash build.sh',),
+    'port/gpu_v2/gpu/gpu_host.cpp': ('out->gyro_aim', 'out->gyro_focused', 'out->stick_look_sensitivity'),
     'port/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp': ('UseOnDemandShaderStages', '"TLG_LAZY_PROGRAMS"'),
     'port/launcher/backports_table.py': ('TLG_LAZY_PROGRAMS',),
     'port/launcher/qt/graphics.py': ('TLG_LAZY_PROGRAMS',),

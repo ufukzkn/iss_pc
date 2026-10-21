@@ -54,6 +54,11 @@ geliyor; DLC/gyro kaybolmasın diye paketler geçici olarak bu fork'tan indirili
 
 ## Free-look stick sensitivity
 
+Windows releases include both renderer executables and upstream's renderer v2
+defaults. The v2 input bridge passes the same gyro/stick settings as v1, including
+window focus. The shader-cache on-demand experiment applies to v1's cache loader;
+renderer v2 has its own precompile/cache path. Compare the renderers separately.
+
 **Controls > Controller > Free-look stick sensitivity** in the launcher and
 **Insert > Controls > Controller camera** in game share a live `tlg.ini` setting.
 Default **1.00x** preserves physical stick input exactly; try **1.35-1.50x** for

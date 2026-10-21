@@ -16,13 +16,15 @@ with zipfile.ZipFile(args.package) as archive:
     entries = {item.filename: archive.read(item) for item in archive.infolist() if not item.is_dir()}
 prefix = 'infamous-windows-x86_64/'
 assert all(name.startswith(prefix) for name in entries)
+for required in ('out/tlg-probe.exe', 'out/tlg-probe-v2.exe', 'gpu_v2/defaults.env'):
+    assert entries.get(prefix + required), f'Missing renderer package file: {required}'
 # The upstream manifest was generated before fork provenance/VERSION were added.
 entries.pop(prefix + 'package-files.json', None)
 for name in ('Update-inFAMOUS.ps1', 'Update-inFAMOUS.cmd'):
     entries[prefix + name] = (root / 'maintenance' / name).read_bytes()
 entries[prefix + 'FORK-README.md'] = (root / 'FORK-README.md').read_bytes()
 entries[prefix + 'VERSION'] = (info['version'] + '\n').encode()
-manifest = dict(info, schema=1, features=['dlc-unlockers', 'fps-menu-labels', 'gyro-aim', 'upstream-launcher-install', 'shader-cache-on-demand', 'free-look-stick-sensitivity', 'update-progress-window'],
+manifest = dict(info, schema=1, features=['dlc-unlockers', 'fps-menu-labels', 'gyro-aim', 'upstream-launcher-install', 'shader-cache-on-demand', 'free-look-stick-sensitivity', 'update-progress-window', 'renderer-v2'],
                 dlc_author='BeastBoyyy', dlc_pr='https://github.com/HayatoG/iss_pc/pull/249',
                 files={name[len(prefix):]: hashlib.sha256(data).hexdigest() for name, data in sorted(entries.items())})
 entries[prefix + 'FORK-BUILD.json'] = (json.dumps(manifest, indent=2) + '\n').encode()
