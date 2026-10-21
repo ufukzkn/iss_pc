@@ -97,6 +97,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Essential feature check failed' }
           python -m unittest discover -s port/tests -p test_content.py -v
           if ($LASTEXITCODE) { throw 'DLC profile tests failed' }
+          python -m unittest discover -s port/tests -p test_save_regions.py -v
+          if () { throw 'Regional save tests failed' }
           python maintenance/test_prepare_fork.py
           if ($LASTEXITCODE) { throw 'Upstream merge routing test failed' }
           python maintenance/test_renderer_v2_package.py
