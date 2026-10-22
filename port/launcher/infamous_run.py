@@ -270,6 +270,7 @@ DEFAULT_SETTINGS = {
     'display_mode': 'Windowed',    # Windowed | Borderless | Fullscreen (tlg.ini)
     'vsync': True,
     'vram_budget_mb': 3500,  # 5600 runs out of VRAM loading the first level (RTX 2060, 6 GB)
+    'vram_auto': True,       # renderer v2: ISS_GC_BUDGET_MB=auto, the texture budget follows the card live
     'stick_deadzone': 10,    # percent; runtime_pad.c ISS_STICK_DEADZONE
     'eager_readback': False,  # ISS_EAGER_READBACK: copy GPU results the game reads back at each fence
     'write_merge': True,     # ISS_WRITE_MERGE: game memcpy/memset into GPU memory without a GPU wait
@@ -731,7 +732,10 @@ def build_env(settings, extra=None):
     env = dict(os.environ)
     for key, value in DEFAULT_ENV.items():
         env.setdefault(key, value)  # explicit ISS_* in the environment always win
-    env['ISS_GC_BUDGET_MB'] = os.environ.get('ISS_GC_BUDGET_MB', str(int(settings['vram_budget_mb'])))
+    # Renderer v2 computes the texture budget itself (what the card leaves after everything else);
+    # this port's renderer always takes the number.
+    budget = 'auto' if settings.get('vram_auto', True) and renderer_v2(settings) else str(int(settings['vram_budget_mb']))
+    env['ISS_GC_BUDGET_MB'] = os.environ.get('ISS_GC_BUDGET_MB', budget)
     env['ISS_READBACKS'] = os.environ.get('ISS_READBACKS', str(settings.get('gpu_readbacks', '2')))
     env['ISS_EAGER_READBACK'] = os.environ.get('ISS_EAGER_READBACK', '1' if settings.get('eager_readback', False) else '0')
     env['ISS_WRITE_MERGE'] = os.environ.get('ISS_WRITE_MERGE', '1' if settings.get('write_merge', True) else '0')

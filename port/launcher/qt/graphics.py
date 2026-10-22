@@ -23,11 +23,15 @@ SETTING_ROWS = {
     's:precompile_shaders': ('precompile_shaders', 'switch', False),
     's:close_on_play': ('close_on_play', 'switch', True),
     's:reopen_launcher': ('reopen_launcher', 'switch', False),
+    's:vram_auto': ('vram_auto', 'switch', False),
     's:vram_budget_mb': ('vram_budget_mb', 'slider', False),
 }
 DISPLAY_MODES = ('Windowed', 'Borderless', 'Fullscreen')
 OVERLAY_IDS = tuple(i.id for i in backports_table.MENU if i.tab == 'Overlay')
+# Two-value choices shown here as a switch: id -> (value when off, value when on, label key).
+SWITCH_CHOICES = {'TLG_RENDERER': ('1', '2', 'gfx_renderer_v2')}
 SECTIONS = (
+    ('gfx_sec_renderer', ('TLG_RENDERER', 'TLG_NATIVE_PASSES')),
     ('gfx_sec_image', ('s:display_mode', 's:vsync', 'menu:fsr1', 'menu:rcas', 'menu:rcas_strength',
                         'TLG_BARRIER_MERGE')),
     ('gfx_sec_rate', ('menu:fps_limit', 'menu:frames_queued')),
@@ -35,7 +39,7 @@ SECTIONS = (
     ('gfx_sec_gpu', ('TLG_ASYNC_SHADERS', 'TLG_BACKGROUND_WARMUP', 'TLG_LAZY_PROGRAMS', 's:gpu_readbacks', 's:eager_readback',
                      's:write_merge', 'TLG_DEFERRED_READBACK', 'TLG_STALE_READBACK', 'TLG_DRAIN_SLEEP', 's:precompile_shaders',
                      's:close_on_play', 's:reopen_launcher')),
-    ('gfx_sec_vram', ('s:vram_budget_mb',)),
+    ('gfx_sec_vram', ('s:vram_auto', 's:vram_budget_mb')),
     ('gfx_sec_overlay', ('s:show_fps',) + OVERLAY_IDS),
 )
 STEPS = {'menu:overlay_scale': 10, 's:vram_budget_mb': 200}
@@ -110,7 +114,13 @@ class Graphics(QObject):
                'valueText': '', 'disabled': False, 'decimals': 0, 'note': '', 'info': '', 'action': None}
         value = self.settings.get(key, tlg_run.DEFAULT_SETTINGS.get(key))
         default = tlg_run.DEFAULT_SETTINGS.get(key)
+        if key == 'vram_auto':
+            # Only renderer v2 computes it; this port's renderer always uses the budget below.
+            row['disabled'] = backports_table.effective(gfxlogic.item_by_id('TLG_RENDERER'),
+                                                        self.backend.fix_states) != '2'
         if key == 'vram_budget_mb':
+            row['disabled'] = bool(self.settings.get('vram_auto', True)) and backports_table.effective(
+                gfxlogic.item_by_id('TLG_RENDERER'), self.backend.fix_states) == '2'
             row['info'] = self.vramLine
             row['note'] = self.vramWarn
             if self.canSuggest:
@@ -146,12 +156,18 @@ class Graphics(QObject):
                        value=int(value), valueText=f'{int(value)}{item.unit}')
             if rid == 'menu:rcas_strength':
                 row['disabled'] = backports_table.effective(gfxlogic.item_by_id('menu:rcas'), states) != '1'
+        if rid == 'TLG_NATIVE_PASSES':
+            # Native passes only exist in renderer v2.
+            row['disabled'] = backports_table.effective(gfxlogic.item_by_id('TLG_RENDERER'), states) != '2'
         elif item.vtype == 'float':
             step = backports_table.FLOAT_STEPS.get(item.key, 0.05)
             decimals = 0 if step >= 1 else 1 if step >= 0.1 else 2 if step >= 0.01 else 3
             number = float(value)
             row.update(control='slider', lo=item.lo, hi=item.hi, step=step, unit=item.unit, value=number,
                        decimals=decimals, valueText=f'{number:.{decimals}f}{item.unit}')
+        elif rid in SWITCH_CHOICES:
+            _, on_value, label_key = SWITCH_CHOICES[rid]
+            row.update(label=self.t(label_key), on=value == on_value)
         elif item.vtype == 'choice':
             options = [(v, t.pair((en, pt)) + (f' ({self.t("exp_default")})' if v == item.default else ''))
                        for v, en, pt in item.choices]
@@ -187,6 +203,9 @@ class Graphics(QObject):
             tlg_run.save_settings(self.settings)
             self.rebuild()
         else:
+            if rid in SWITCH_CHOICES:
+                off_value, on_value, _ = SWITCH_CHOICES[rid]
+                value = on_value if value == '1' else off_value
             self.backend.setFix(rid, value)      # saves tlg.ini, refreshes the chips; rebuild follows
 
     @Slot(str)
