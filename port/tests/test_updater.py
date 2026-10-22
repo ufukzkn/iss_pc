@@ -329,7 +329,9 @@ class InstallTests(unittest.TestCase):
 
 class StringsTests(unittest.TestCase):
     def test_every_error_kind_has_a_message(self):
-        strings = json.loads((ROOT / 'launcher' / 'qt' / 'i18n' / 'strings.json').read_text(encoding='utf-8'))
+        # Validate the same merged message table the launcher displays.
+        from qt.logic import load_strings
+        strings = load_strings()
         for kind in ('noasset', 'insecure', 'size', 'checksum', 'space', 'write', 'archive', 'cancel', 'launch',
                      'offline', 'timeout', 'limit', 'http', 'bad'):
             self.assertIn('upd_err_' + kind, strings)
