@@ -4,6 +4,22 @@ This unofficial build inherits [HayatoG/iss_pc](https://github.com/HayatoG/iss_p
 HayatoG and the upstream contributors created the native port. Original licenses,
 copyright notices and commit authorship are preserved.
 
+Fork downloads: https://github.com/ufukzkn/iss_pc/releases/latest
+Gyro setup and limitations: [docs/GYRO_AIM.md](docs/GYRO_AIM.md).
+
+## Following upstream
+
+The root README and `qt/i18n/strings.json` stay identical to the official stable release.
+Fork documentation lives here and in fork-specific guides. Fork UI messages live in
+`qt/i18n/fork_strings.json`, loaded alongside the upstream table; intentional label overrides
+are listed separately. The Windows packager includes this extra JSON through its existing
+asset discovery. Upstream README reorganizations and new translation entries can therefore
+merge without sharing the same additions. Translation key collisions still fail explicitly.
+
+Runtime, controls and updater integrations remain code changes. They are tested after each
+official release merge; a conflicting code change still stops publication for review rather
+than silently dropping a feature. Experimental native-pass fixes stay on a separate branch.
+
 - DLC runtime: **BeastBoyyy**, [PR #249](https://github.com/HayatoG/iss_pc/pull/249),
   original commit `d10332d27636ee42603c95a021ff1b1fa7086009` retained in history.
 - Optional L2-held gyro aiming: [PR #279](https://github.com/HayatoG/iss_pc/pull/279).

@@ -34,7 +34,8 @@ GAME_LANGUAGE_NAMES = {'en': 'English', 'en_GB': 'English (UK)', 'pt_BR': 'Portu
 
 
 def load_strings(path=HERE / 'i18n' / 'strings.json'):
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    from .fork_i18n import load_strings_with_fork
+    return load_strings_with_fork(path)
 
 
 def tk_text():

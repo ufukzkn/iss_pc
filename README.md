@@ -1,5 +1,3 @@
-> **Unofficial DLC Windows fork:** [fork releases](https://github.com/ufukzkn/iss_pc/releases/latest) include BeastBoyyy's DLC support and a backup-based updater. [Fork details, credits and update instructions](FORK-README.md). The native port is by HayatoG and upstream contributors.
-
 <p align="center"><img src="port/packaging/icon/infamous-icon-1024.png" width="160" alt=""></p>
 
 <h1 align="center">inFAMOUS Second Son — native PC port</h1>
@@ -306,8 +304,6 @@ By default saves and settings live in `user/`, next to the game. **Updating dele
 **On the Saves & data screen:** one card per slot (title, chapter, karma, date, size and the save's own thumbnail) with `.zip` export, duplicate and delete; `.zip` import; backups with **Restore**, keeping the last N (default 10) and an extra backup folder (another disk). **A backup is made before every play session** (skipped if nothing changed). Every operation that writes to a save needs the game closed and makes a safety backup first; an invalid or dangerous `.zip` (paths with `..`, absolute paths, links) is refused without writing anything.
 
 ## Motion sensor and touchpad
-
-**Optional gyro aiming:** real controller gyro can supplement the right stick while holding L2. It is off by default; enable it in Launcher > Controls or Insert > Controls. Graffiti motion is unchanged. See [gyro aiming settings and limitations](docs/GYRO_AIM.md).
 
 The game asks for the motion sensor and the touchpad in many scenes: graffiti, absorbing powers (smoke, neon...), opening doors and other interactions. On a **DualShock 4 or DualSense** the gyro and the touchpad work as is, with nothing to turn on. On other controllers and on the keyboard, the port simulates both.
 
