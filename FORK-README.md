@@ -30,6 +30,12 @@ than silently dropping a feature. Experimental native-pass fixes stay on a separ
   the existing content-profile labels are deduplicated into the same bounded
   AppContent provider, so enumeration and individual lookups stay consistent.
 - Small FPS-menu label correction retained from the earlier fork.
+- CUSA00004 save recognition is retained from [upstream PR #553](https://github.com/HayatoG/iss_pc/pull/553).
+- **Mods > Camera improvements (1.5x + slowdown fix)** is backported from sunnyGeezy's
+  upstream commits `50607e5` and `72c8509`, with the verified CUSA00004 executable
+  support from [PR #554](https://github.com/HayatoG/iss_pc/pull/554). It is off by default.
+  [Build checks and limitations](docs/CUSA00004_CAMERA.md) apply; this native camera
+  mod is separate from the fork's right-stick input gain setting.
 
 ## Updates
 
