@@ -365,7 +365,7 @@ APP_VER_107 = iss_compat.APP_VER_107
 # the command line prints both. {detail} names the file.
 _COPY_UPDATE = ('Copy every file of update 1.07 (matching CUSA00004/CUSA00223 patch: eboot.bin, sce_module/, sce_sys/ and the rest) '
                 'over the base game folder, replacing the files; see "Required game files" in the README.',
-                'Copie todos os arquivos do update 1.07 (matching CUSA00004/CUSA00223 patch: eboot.bin, sce_module/, sce_sys/ e o resto) '
+                'Copie todos os arquivos do update 1.07 (patch CUSA00004/CUSA00223 correspondente: eboot.bin, sce_module/, sce_sys/ e o resto) '
                 'por cima da pasta do jogo base, substituindo os arquivos; veja "Arquivos do jogo necessários" no README.')
 TEXT = {
     'old_module': ('{detail} is not the one from update 1.07 (it comes from the base game 1.00 or another '
@@ -377,10 +377,10 @@ TEXT = {
                     'O eboot.bin não é o do update 1.07 ({detail}); o port só é testado com o CUSA00223/CUSA00004 '
                     '1.07. ' + _COPY_UPDATE[1]),
     'old_param': ('{detail} is not the one from update 1.07: the game starts, but cheats (mods) made for 1.07 '
-                  'are not listed. Copy the 1.07 param.sfo (on the PS4: /system_data/priv/appmeta/CUSA00223/param.sfo) '
+                  'are not listed. Copy the matching title\'s 1.07 param.sfo (on the PS4: /system_data/priv/appmeta/<TITLE_ID>/param.sfo) '
                   'into the game folder\'s sce_sys/; see "Required game files" in the README.',
                   'O {detail} não é o do update 1.07: o jogo abre, mas os cheats (mods) feitos para o 1.07 não '
-                  'aparecem. Copie o param.sfo do 1.07 (no PS4: /system_data/priv/appmeta/CUSA00223/param.sfo) '
+                  'aparecem. Copie o param.sfo do 1.07 do mesmo título (no PS4: /system_data/priv/appmeta/<TITLE_ID>/param.sfo) '
                   'para o sce_sys/ da pasta do jogo; veja "Arquivos do jogo necessários" no README.'),
     'unreadable': ('{detail} could not be read (damaged, incomplete or still encrypted): dump it again from the PS4.',
                    'Não deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faça o dump de novo no PS4.'),

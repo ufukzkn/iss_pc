@@ -169,6 +169,10 @@
     "upd_check_on_open_note": {
       "en": "Uses the public GitHub API to check releases. Sends no player data.",
       "pt": "Usa a API pública do GitHub para verificar releases. Não envia dados do jogador."
+    },
+    "err_zip_empty": {
+      "en": "There are no inFAMOUS saves in {detail} (expected: savedata/<user>/CUSA00004/… or savedata/<user>/CUSA00223/…).",
+      "pt": "Não há saves do inFAMOUS dentro de {detail} (esperado: savedata/<usuário>/CUSA00004/… ou savedata/<usuário>/CUSA00223/…)."
     }
   }
 }
