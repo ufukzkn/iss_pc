@@ -5,9 +5,12 @@ import re
 root = Path(__file__).resolve().parents[1]
 checks = {
     'port/scripts/content_profile.py': ('G3CONT02', 'installed_addons'),
-    'port/src/probe.c': ('G3CONT02', 'runtime_content_set_addons'),
+    'port/src/probe.c': ('G3CONT02', 'runtime_content_set_addons', 'install_iss_camera_speed', 'install_iss_pitch_safeguard'),
+    'port/src/iss_camera_hook.h': ('CUSA00004', 'iss_camera_signature_match'),
+    'port/launcher/userdata.py': ('CUSA00004',),
+    'port/launcher/savemanager.py': ('SERIALS',),
     'port/src/runtime_content.c': ('runtime_content_set_addons',),
-    'port/launcher/infamous_run.py': ('ISS_ADDCONT_DIR',),
+    'port/launcher/infamous_run.py': ('ISS_ADDCONT_DIR', 'camera_build_supported', 'camera_mod_environment', 'ISS_CAMERA_PREVENT_PITCH_SLOWDOWN'),
     'port/src/runtime_pad.c': ('sample_gyro_aim', 'stick_look_axis'),
     'port/launcher/qt/updates.py': ('canInstall', 'update_install.prepare', 'releaseOptions', 'baselineNotes'),
     'port/launcher/update_install.py': ('write_manifest', 'install_lock'),
