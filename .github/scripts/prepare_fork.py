@@ -49,21 +49,46 @@ def merge_release(base, target):
 
 def main():
     assert os.environ['GITHUB_REPOSITORY'] == REPO
-    official = api(f'repos/{UPSTREAM}/releases/latest')
+    channel = os.environ.get('CHANNEL', 'stable')
+    assert channel in ('stable', 'beta')
+    stable = api(f'repos/{UPSTREAM}/releases/latest')
+    official = stable
+    if channel == 'beta':
+        candidates = api(f'repos/{UPSTREAM}/releases?per_page=30')
+        official = next((r for r in candidates if r['prerelease'] and not r['draft']), None)
+        if not official:
+            with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
+                stream.write('needed=false\n')
+            print('No upstream beta published')
+            return
     tag = official['tag_name']
-    assert re.fullmatch(r'v[0-9A-Za-z.+_-]+', tag), 'Unexpected upstream tag'
-    assert not official['draft'] and not official['prerelease']
+    assert re.fullmatch(r'[0-9A-Za-z.+_-]+', tag), 'Unexpected upstream tag'
+    assert not official['draft'] and bool(official['prerelease']) == (channel == 'beta')
     base = git('rev-parse', 'HEAD')
     git('remote', 'add', 'upstream', f'https://github.com/{UPSTREAM}.git')
+    # Continue the previous beta integration so resolved upstream/fork conflicts stay resolved.
+    if channel == 'beta':
+        previous = api(f'repos/{REPO}/branches/beta', missing=True)
+        if previous:
+            git('fetch', '--no-tags', 'origin', 'beta')
+            git('checkout', '--detach', 'FETCH_HEAD')
+            merge_release(git('rev-parse', 'HEAD'), base)
     git('fetch', '--no-tags', 'upstream', 'tag', tag)
-    merge_release(base, f'refs/tags/{tag}')
+    merge_release(git('rev-parse', 'HEAD'), f'refs/tags/{tag}')
     candidate = git('rev-parse', 'HEAD')
-    published = api(f'repos/{REPO}/releases/latest', missing=True)
+    if channel == 'beta':
+        published = next((r for r in api(f'repos/{REPO}/releases?per_page=30')
+                          if r['prerelease'] and not r['draft']), None)
+    else:
+        published = api(f'repos/{REPO}/releases/latest', missing=True)
     needed = not published or published['target_commitish'] != candidate or os.environ.get('FORCE') == 'true'
-    version = 'v' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y.%m.%d') + '-' + candidate[:7]
+    prefix = 'beta-' if channel == 'beta' else 'v'
+    version = prefix + datetime.datetime.now(datetime.timezone.utc).strftime('%Y.%m.%d') + '-' + candidate[:7]
     result = {'repository': REPO, 'upstream_repository': UPSTREAM, 'upstream_tag': tag,
               'upstream_commit': git('rev-parse', f'refs/tags/{tag}^{{commit}}'),
-              'base_commit': base, 'commit': candidate, 'version': version, 'needed': needed}
+              'base_commit': base, 'commit': candidate, 'version': version, 'needed': needed,
+              'channel': channel, 'stable_tag': stable['tag_name'],
+              'upstream_notes': official.get('body', '')}
     folder = Path(os.environ['RUNNER_TEMP']) / 'fork-candidate'
     folder.mkdir()
     (folder / 'candidate.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

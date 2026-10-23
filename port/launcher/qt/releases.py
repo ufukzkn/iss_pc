@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Release check, no Qt: version names, comparison, the notes in the player's language and the one
-HTTPS GET the Updates screen makes. Downloading and installing a release is updater.py, and only
+bounded HTTPS requests the Updates screen makes. Downloading and installing a release is updater.py, and only
 when the player asks for it."""
 import json
 import re
@@ -50,6 +50,7 @@ def error_text(error, t):
 
 # ------------------------------------------------------------------------------------ versions
 _VERSION_RE = re.compile(r'^v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9a-f]{4,40}))?(\+dirty)?$', re.IGNORECASE)
+_BETA_RE = re.compile(r'^beta-(\d{4})\.(\d{1,2})\.(\d{1,2})-([0-9a-f]{7,40})$', re.I)
 _COMMIT_RE = re.compile(r'^([0-9a-f]{7,40})(\+dirty)?$', re.IGNORECASE)
 
 
@@ -57,7 +58,7 @@ def parse_version(text):
     """((year, month, day) or None, commit or '') of 'v2026.10.15-abc1234', 'v2026.10.15' or a bare
     commit hash (the "Build:" line of a log). None for anything else."""
     text = (text or '').strip()
-    m = _VERSION_RE.match(text)
+    m = _VERSION_RE.match(text) or _BETA_RE.match(text)
     if m:
         return (int(m.group(1)), int(m.group(2)), int(m.group(3))), (m.group(4) or '').lower()
     m = _COMMIT_RE.match(text)
@@ -78,6 +79,8 @@ def compare(current, latest):
     'same'      the player has the latest
     'older'     the player runs something newer than the latest release (a test build)
     'unknown'   the version of this install is not known"""
+    if current and current == latest:
+        return 'same'
     cur, new = parse_version(current), parse_version(latest)
     if cur == 'bad' or new == 'bad' or not current or not latest:
         return 'unknown'
@@ -149,7 +152,7 @@ def user_agent(version=''):
     return f'iss_pc-launcher/{version or "unknown"} (+https://github.com/HayatoG/iss_pc)'
 
 
-def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout=TIMEOUT, etag=''):
+def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout=TIMEOUT, etag='', *, catalog=False):
     """The one request the launcher makes: GET the latest release. Sends no data of the player,
     only the User-Agent that names the port. Returns {'tag','name','url','body','published','assets',
     'etag'} (assets: [{'name','url','size'}] of the files whose download URL is HTTPS on our own
@@ -184,9 +187,20 @@ def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout
         raise UpdateError('offline', str(error)) from error
     try:
         data = json.loads(raw.decode('utf-8'))
-        tag = str(data['tag_name'])
+        if catalog:
+            if not isinstance(data, list):
+                raise ValueError('Expected a release list')
+            return [normalize_release(item) for item in data
+                    if isinstance(item, dict) and not item.get('draft') and item.get('tag_name')]
+        return normalize_release(data, answer_etag)
     except (ValueError, KeyError, TypeError, UnicodeDecodeError) as error:
         raise UpdateError('bad') from error
+
+
+def normalize_release(data, etag=''):
+    if not isinstance(data, dict):
+        raise ValueError('Expected a release object')
+    tag = str(data['tag_name'])
     page = str(data.get('html_url') or '')
     assets = []
     for asset in data.get('assets') or []:
@@ -198,4 +212,41 @@ def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout
                            'digest': str(asset.get('digest') or '')})
     return {'tag': tag, 'name': str(data.get('name') or tag), 'body': str(data.get('body') or ''),
             'url': page if page.startswith(RELEASE_PREFIX) else RELEASES_URL,    # only our own releases page opens
-            'published': str(data.get('published_at') or '')[:10], 'assets': assets, 'etag': answer_etag}
+            'published': str(data.get('published_at') or '')[:10], 'assets': assets, 'etag': etag,
+            'beta': bool(data.get('prerelease'))}
+
+
+UPSTREAM_API = 'https://api.github.com/repos/HayatoG/iss_pc/releases/'
+
+
+def fetch_catalog(version='', opener=urllib.request.urlopen):
+    """Stable stays first; prereleases are explicit choices, never automatic stable updates.
+
+    Only this fork's packages can be installed. Upstream is consulted for the stable reference
+    notes, not for binaries. Three pages bound the network work on a busy release feed.
+    """
+    stable = fetch_latest(version, opener=opener)
+    choices = [stable]
+    for page in range(1, 4):
+        items = fetch_latest(version, opener=opener,
+                             url=API_URL.rsplit('/', 1)[0] + f'?per_page=30&page={page}', catalog=True)
+        choices.extend(item for item in items if item['beta'])
+        if len(items) < 30 or len(choices) >= 11:
+            break
+    choices[1:] = sorted(choices[1:], key=lambda item: (item['published'], item['tag']), reverse=True)[:10]
+    # The beta build records its exact stable baseline, so future stable releases cannot change
+    # the comparison beneath an older beta. A missing reference is explicit, not guessed.
+    baselines = {}
+    for item in choices[1:]:
+        match = re.search(r'^Stable baseline: ([0-9A-Za-z.+_-]+)\s*$', item['body'], re.M)
+        if not match:
+            continue
+        tag = match.group(1)
+        if tag not in baselines:
+            try:
+                baseline = fetch_latest(version, opener=opener, url=UPSTREAM_API + 'tags/' + tag)
+                baselines[tag] = {'tag': tag, 'body': baseline['body'][:40000]}
+            except UpdateError:
+                baselines[tag] = {'tag': tag, 'body': ''}
+        item['baseline'] = baselines[tag]
+    return {'releases': choices}

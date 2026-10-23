@@ -15,7 +15,8 @@ sys.path.insert(0, str(ROOT / 'launcher'))
 from qt import logic  # noqa: E402
 
 QT = ROOT / 'launcher' / 'qt'
-STRINGS = json.loads((QT / 'i18n' / 'strings.json').read_text(encoding='utf-8'))
+from qt.fork_i18n import load_strings_with_fork
+STRINGS = load_strings_with_fork(QT / 'i18n' / 'strings.json')
 PT = {'ui_language': 'pt_BR'}
 EN = {'ui_language': 'en_US'}
 

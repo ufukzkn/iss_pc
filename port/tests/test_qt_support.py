@@ -25,7 +25,8 @@ try:
 except ImportError:
     HAVE_QT = False
 
-STRINGS = json.loads((ROOT / 'launcher' / 'qt' / 'i18n' / 'strings.json').read_text(encoding='utf-8'))
+from qt.fork_i18n import load_strings_with_fork
+STRINGS = load_strings_with_fork(ROOT / 'launcher' / 'qt' / 'i18n' / 'strings.json')
 T = logic.Translator({'ui_language': 'en_US'}, STRINGS, {})
 
 

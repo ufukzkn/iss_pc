@@ -36,22 +36,37 @@ Item {
                 Column {
                     id: versions
                     x: 22; y: 20; width: parent.width - 44; spacing: 14
+                    Column {
+                        width: parent.width; spacing: 8
+                        Text { text: Theme.tr("upd_choose_release"); color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 12; font.weight: Font.Bold }
+                        Select {
+                            width: parent.width; accent: page.accent
+                            model: Updates.releaseOptions; currentIndex: Updates.releaseIndex
+                            enabled: !Updates.busy && !Updates.checking && !Updates.dialog.open && !Updates.canRestart
+                            onActivated: (i) => Updates.selectRelease(i)
+                        }
+                        Text { width: parent.width; text: Theme.tr("upd_beta_warning"); visible: Updates.betaSelected
+                               wrapMode: Text.WordWrap; color: Theme.warn; font.family: Theme.fontText; font.pixelSize: 13 }
+                        Text { width: parent.width; text: Theme.tr("upd_beta_empty"); visible: Updates.releaseOptions.length === 1
+                               wrapMode: Text.WordWrap; color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
+                    }
                     Row {
-                        spacing: 48
+                        width: parent.width; spacing: 24
                         Column {
-                            spacing: 4
+                            width: (versions.width - 24) / 2; spacing: 4
                             Text { text: Theme.tr("upd_current"); color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 12
                                    font.weight: Font.Bold; font.capitalization: Font.AllUppercase; font.letterSpacing: 1 }
-                            Text { text: Updates.current; color: "#fff"; font.family: Theme.fontDisplay; font.variableAxes: ({ "wght": 800 }); font.pixelSize: 30
+                            Text { width: parent.width; wrapMode: Text.WrapAnywhere; text: Updates.current; color: "#fff"; font.family: Theme.fontDisplay; font.variableAxes: ({ "wght": 800 }); font.pixelSize: 30
                                    font.weight: Font.ExtraBold; font.letterSpacing: 1 }
                         }
                         Column {
-                            spacing: 4
-                            Text { text: Theme.tr("upd_latest"); color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 12
+                            width: (versions.width - 24) / 2; spacing: 4
+                            Text { text: Theme.tr("upd_selected_release"); color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 12
                                    font.weight: Font.Bold; font.capitalization: Font.AllUppercase; font.letterSpacing: 1 }
-                            Text { text: Updates.latest + (Updates.published !== "" ? "  ·  " + Updates.published : ""); color: Updates.available ? Theme.warn : "#fff"
+                            Text { width: parent.width; wrapMode: Text.WrapAnywhere; text: Updates.latest; color: Updates.available ? Theme.warn : "#fff"
                                    font.family: Theme.fontDisplay; font.variableAxes: ({ "wght": 800 }); font.pixelSize: 30
                                    font.weight: Font.ExtraBold; font.letterSpacing: 1 }
+                            Text { text: Updates.published; color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 12 }
                         }
                     }
                     Row {
@@ -134,6 +149,18 @@ Item {
                 TextEdit { id: notesText; x: 20; y: 18; width: parent.width - 40; text: Updates.notes; readOnly: true; selectByMouse: true
                            wrapMode: TextEdit.Wrap; color: Theme.textSoft; selectionColor: page.accent; selectedTextColor: "#171100"
                            font.family: Theme.fontText; font.pixelSize: 14 }
+            }
+            Column {
+                visible: Updates.betaSelected; width: parent.width; spacing: 12
+                Text { width: parent.width; text: Updates.baselineTitle; wrapMode: Text.WordWrap; color: "#fff"
+                       font.family: Theme.fontDisplay; font.pixelSize: 22; font.weight: Font.ExtraBold }
+                Rectangle {
+                    width: parent.width; height: baselineText.implicitHeight + 36
+                    radius: 12; color: Theme.card; border.width: 1; border.color: Theme.cardLine
+                    TextEdit { id: baselineText; x: 20; y: 18; width: parent.width - 40; text: Updates.baselineNotes
+                               readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: Theme.textSoft
+                               selectionColor: page.accent; font.family: Theme.fontText; font.pixelSize: 14 }
+                }
             }
             Item { width: 1; height: 30 }
         }

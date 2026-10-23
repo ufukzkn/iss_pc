@@ -26,7 +26,8 @@ except ImportError:
     HAVE_QT = False
 
 QT = ROOT / 'launcher' / 'qt'
-STRINGS = json.loads((QT / 'i18n' / 'strings.json').read_text(encoding='utf-8'))
+from qt.fork_i18n import load_strings_with_fork
+STRINGS = load_strings_with_fork(QT / 'i18n' / 'strings.json')
 RUNTIME_PAD = ROOT / 'src' / 'runtime_pad.c'
 SETTINGS_CPP = ROOT / 'gpu' / 'shim' / 'tlg_settings.cpp'
 

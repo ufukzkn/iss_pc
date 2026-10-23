@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""The QObject behind the Updates screen. One HTTPS GET to the GitHub releases API when the player
+"""The QObject behind the Updates screen. Bounded HTTPS GETs to the GitHub releases API when the player
 clicks "Check for updates" (or opens the launcher with the option on, off by default); it sends no
 data of the player. "Release page" opens the release in the browser. In a packaged build, "Download
 and install" fetches the package (updater.py) after a confirmation. On Windows the verified package
@@ -56,6 +56,15 @@ class Updates(QObject):
         self._dialog, self._handlers = {}, {}
         seen = backend.settings.get('update_seen')
         self.release = dict(seen) if isinstance(seen, dict) and seen.get('tag') else None
+        cached = backend.settings.get('update_catalog')
+        self._releases = [r for r in cached if isinstance(r, dict) and r.get('tag')] if isinstance(cached, list) else []
+        if not self._releases and self.release:
+            self._releases = [self.release]
+        self._selected = 0
+        if backend.settings.get('update_channel') == 'beta':
+            self._selected = next((i for i, r in enumerate(self._releases) if r.get('beta')), 0)
+        if self._releases:
+            self.release = self._releases[self._selected]
         self.fetched.connect(self._on_fetched)
         self.progressed.connect(self._on_progress)
         self.stepDone.connect(self._on_step)
@@ -76,7 +85,11 @@ class Updates(QObject):
     def status(self):
         if not self.release:
             return 'none'
-        return releases.compare(self.installed(), self.release.get('tag', ''))
+        status = releases.compare(self.installed(), self.release.get('tag', ''))
+        # Explicit selection may switch channels or restore a stable build older than a beta.
+        if self._releases and status in ('older', 'unknown') and self.installed() != self.release.get('tag'):
+            return 'different'
+        return status
 
     @Property(bool, notify=changed)
     def available(self):
@@ -136,6 +149,41 @@ class Updates(QObject):
         notes = releases.extract_notes(self.release.get('body', ''), self.backend.t_.pt())
         return notes or self.t('upd_no_notes')
 
+    @Property('QVariantList', notify=changed)
+    def releaseOptions(self):
+        return [{'label': self.t('upd_beta' if r.get('beta') else 'upd_stable') + ' · ' + r['tag']}
+                for r in self._releases]
+
+    @Property(int, notify=changed)
+    def releaseIndex(self):
+        return self._selected
+
+    @Property(bool, notify=changed)
+    def betaSelected(self):
+        return bool((self.release or {}).get('beta'))
+
+    @Property(str, notify=changed)
+    def baselineTitle(self):
+        baseline = (self.release or {}).get('baseline') or {}
+        return self.t('upd_baseline', tag=baseline.get('tag', '—'))
+
+    @Property(str, notify=changed)
+    def baselineNotes(self):
+        if not self.betaSelected:
+            return ''
+        baseline = (self.release or {}).get('baseline') or {}
+        return releases.extract_notes(baseline.get('body', ''), self.backend.t_.pt()) or self.t('upd_baseline_missing')
+
+    @Slot(int)
+    def selectRelease(self, index):
+        if self._checking or self.busy or self._phase or self._dialog or not 0 <= index < len(self._releases):
+            return
+        self._selected, self.release = index, self._releases[index]
+        self._error = ''
+        self.backend.settings['update_channel'] = 'beta' if self.betaSelected else 'stable'
+        self._save()
+        self.changed.emit()
+
     @Property(str, notify=changed)
     def introText(self):
         return self.t('upd_intro_inplace' if self.windows() else 'upd_intro')
@@ -159,17 +207,14 @@ class Updates(QObject):
     # -- the check -----------------------------------------------------------------------------------
     @Slot()
     def check(self):
-        if self._checking or self.busy:
+        if self._checking or self.busy or self._dialog:
             return
         self._checking, self._error = True, ''
         self.changed.emit()
         version = self.installed()
-        # The release seen before: GitHub answers 304 when it is still the latest, without counting
-        # the request against its limit of 60 an hour per network.
-        etag = (self.release or {}).get('etag', '')
 
         def work():
-            fetch = self.probes.get('fetch') or (lambda v: releases.fetch_latest(v, etag=etag))
+            fetch = self.probes.get('fetch') or releases.fetch_catalog
             try:
                 self.fetched.emit(fetch(version))
             except releases.UpdateError as error:
@@ -188,6 +233,18 @@ class Updates(QObject):
                 self.release['checked'] = today
                 self.backend.settings['update_seen'] = self.release
                 self._save()
+        elif isinstance(result, dict) and 'releases' in result:
+            channel = self.backend.settings.get('update_channel', 'stable')
+            self._releases = result['releases']
+            for release in self._releases:
+                release['body'] = release.get('body', '')[:40000]
+                release['checked'] = today
+            self._selected = next((i for i, r in enumerate(self._releases)
+                                   if channel == 'beta' and r.get('beta')), 0)
+            self.release = self._releases[self._selected] if self._releases else None
+            self.backend.settings['update_catalog'] = self._releases
+            self.backend.settings['update_seen'] = next((r for r in self._releases if not r.get('beta')), None)
+            self._save()
         else:
             self.release = {'tag': result['tag'], 'url': result['url'], 'body': result['body'][:20000],
                             'published': result['published'], 'assets': list(result.get('assets') or [])[:20],

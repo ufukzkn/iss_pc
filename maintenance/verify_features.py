@@ -9,7 +9,7 @@ checks = {
     'port/src/runtime_content.c': ('runtime_content_set_addons',),
     'port/launcher/infamous_run.py': ('ISS_ADDCONT_DIR',),
     'port/src/runtime_pad.c': ('sample_gyro_aim', 'stick_look_axis'),
-    'port/launcher/qt/updates.py': ('canInstall', 'update_install.prepare'),
+    'port/launcher/qt/updates.py': ('canInstall', 'update_install.prepare', 'releaseOptions', 'baselineNotes'),
     'port/launcher/update_install.py': ('write_manifest', 'install_lock'),
     'port/launcher/qt/update_progress.py': ('UpdateProgress', 'show_errors=False'),
     'port/launcher/qt/logic.py': ('load_strings_with_fork',),

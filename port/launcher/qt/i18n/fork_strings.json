@@ -63,12 +63,48 @@
     "upd_helper_close": {
       "en": "Close",
       "pt": "Fechar"
+    },
+    "upd_choose_release": {
+      "en": "Release channel / build",
+      "pt": "Canal / versão"
+    },
+    "upd_selected_release": {
+      "en": "Selected release",
+      "pt": "Release selecionada"
+    },
+    "upd_stable": {
+      "en": "Stable · recommended",
+      "pt": "Estável · recomendada"
+    },
+    "upd_beta": {
+      "en": "Beta · test build",
+      "pt": "Beta · teste"
+    },
+    "upd_beta_warning": {
+      "en": "Beta builds may regress or crash. Review the changes below before installing. You can select Stable to return.",
+      "pt": "Betas podem ter regressões ou falhas. Leia as mudanças abaixo antes de instalar. Selecione Estável para voltar."
+    },
+    "upd_beta_empty": {
+      "en": "No beta package is published for this fork yet.",
+      "pt": "Nenhum pacote beta foi publicado para este fork ainda."
+    },
+    "upd_baseline": {
+      "en": "Stable baseline · {tag}",
+      "pt": "Base estável · {tag}"
+    },
+    "upd_baseline_missing": {
+      "en": "The stable reference notes could not be retrieved. Check again when online.",
+      "pt": "Não foi possível obter as notas da base estável. Verifique novamente quando estiver online."
     }
   },
   "overrides": {
     "upd_download": {
       "en": "Latest release",
       "pt": "Última release"
+    },
+    "upd_check_on_open_note": {
+      "en": "Uses the public GitHub API to check releases. Sends no player data.",
+      "pt": "Usa a API pública do GitHub para verificar releases. Não envia dados do jogador."
     }
   }
 }
