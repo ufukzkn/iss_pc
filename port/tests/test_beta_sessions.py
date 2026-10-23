@@ -27,7 +27,7 @@ class SessionTests(unittest.TestCase):
                          process=None, _play_state='launching', lineReceived=mock.Mock(),
                          stateChanged=mock.Mock(), gameStarted=mock.Mock(), finished=mock.Mock())
             def launch(*args):
-                (root/tag/'session.log').write_text('Preparing shaders\n__ISS_GAME_LOG__=native.log\n', encoding='utf-8')
+                Path(args[3]).write_text('Preparing shaders\n__ISS_GAME_LOG__=native.log\n', encoding='utf-8')
                 return process
             with mock.patch('qt.backend.beta_library.launch', side_effect=launch) as start, \
                  mock.patch('qt.backend.time.sleep'):

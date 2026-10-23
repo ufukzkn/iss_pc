@@ -39,6 +39,16 @@ def main():
             lock = Path(os.environ.get('ISS_BETA_SESSION_LOCK') or str(Path(session).with_suffix('.lock')))
             try:
                 with update_install.install_lock(lock.parent, lock.name):
+                    # Keep the previous preparation log plus this run, without touching the
+                    # shared native game logs or another active session's output.
+                    if Path(session).name.startswith('beta-session-'):
+                        previous = sorted(Path(session).parent.glob('beta-session-*.log'),
+                                          key=lambda path: path.stat().st_mtime, reverse=True)
+                        for old in previous[1:]:
+                            try:
+                                old.unlink()
+                            except OSError:
+                                pass
                     sys.stdout = open(session, 'w', encoding='utf-8', buffering=1)
                     sys.stderr = sys.stdout
                     launch = tlg_run.launch

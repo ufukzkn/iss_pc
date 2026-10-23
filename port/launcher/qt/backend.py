@@ -4,6 +4,7 @@ launcher uses (infamous_run: prepare/launch/build_env/save_experimental; backpor
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import (Property, QAbstractListModel, QCoreApplication, QModelIndex, QObject, Qt, QTimer, QUrl,
@@ -482,8 +483,7 @@ class Backend(QObject):
             if running():
                 raise RuntimeError('Another game is running')
             root = self.updates.library_dir()
-            session = beta_library.folder(root, tag) / 'session.log'
-            session.write_text('', encoding='utf-8')
+            session = beta_library.folder(root, tag) / ('beta-session-' + uuid.uuid4().hex + '.log')
             self.process = beta_library.launch(root, tag, self.updates.data_dir(), session,
                                                tlg_run.desktop_env(), tlg_run.detach_options())
             tail = logtail.LogTail(session, LOG_LINES)
