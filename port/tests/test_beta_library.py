@@ -93,6 +93,13 @@ class LibraryTests(unittest.TestCase):
             library.remove(self.betas, self.tag, self.stable, self.user)
         self.assertTrue(first.exists())
 
+    def test_session_lock_blocks_deletion_even_after_parent_launcher_closes(self):
+        first = self.install()
+        with update_install.install_lock(self.betas, '.' + self.tag + '.session.lock'):
+            with self.assertRaises(update_install.InstallError):
+                library.remove(self.betas, self.tag, self.stable, self.user)
+        self.assertTrue(first.exists())
+
     def test_unknown_folders_and_traversal_are_refused(self):
         for tag in ('../stable', 'beta-../stable', 'beta-..', '/stable'):
             with self.assertRaises(UpdateError):

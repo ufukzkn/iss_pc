@@ -35,14 +35,21 @@ def main():
         # session log during beta preparation, then switches to the native game's log.
         session = os.environ.get('ISS_BETA_SESSION_LOG')
         if session:
-            sys.stdout = open(session, 'w', encoding='utf-8', buffering=1)
-            sys.stderr = sys.stdout
-            launch = tlg_run.launch
-            def report_launch(*values, **options):
-                process, log = launch(*values, **options)
-                print('__ISS_GAME_LOG__=' + str(log), flush=True)
-                return process, log
-            tlg_run.launch = report_launch
+            import update_install
+            lock = Path(os.environ.get('ISS_BETA_SESSION_LOCK') or str(Path(session).with_suffix('.lock')))
+            try:
+                with update_install.install_lock(lock.parent, lock.name):
+                    sys.stdout = open(session, 'w', encoding='utf-8', buffering=1)
+                    sys.stderr = sys.stdout
+                    launch = tlg_run.launch
+                    def report_launch(*values, **options):
+                        process, log = launch(*values, **options)
+                        print('__ISS_GAME_LOG__=' + str(log), flush=True)
+                        return process, log
+                    tlg_run.launch = report_launch
+                    sys.exit(tlg_run.main(args[1:]))
+            except update_install.InstallError:
+                sys.exit(1)
         elif sys.stdout is None:
             sys.stdout = open(os.devnull, 'w', encoding='utf-8')
             sys.stderr = sys.stdout

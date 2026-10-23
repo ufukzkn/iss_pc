@@ -97,7 +97,8 @@ def remove(root, tag, current, shared_data, game_dir=None):
     root = Path(root)
     if not record(root, tag):
         raise UpdateError('write', 'Not a managed beta')
-    with update_install.install_lock(root, '.iss-beta.lock'):
+    with update_install.install_lock(root, '.iss-beta.lock'), \
+            update_install.install_lock(root, '.' + tag + '.session.lock'):
         target = folder(root, tag)
         if not record(root, tag):
             raise UpdateError('write', 'Not a managed beta')
@@ -121,6 +122,7 @@ def launch(root, tag, shared_data, session_log, env=None, options=None, popen=su
     environment = dict(os.environ if env is None else env)
     environment['ISS_USER_DIR'] = str(Path(shared_data).absolute())
     environment['ISS_BETA_SESSION_LOG'] = str(Path(session_log).absolute())
+    environment['ISS_BETA_SESSION_LOCK'] = str(Path(root).absolute() / ('.' + tag + '.session.lock'))
     environment['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     environment.pop('_MEIPASS2', None)
     return popen([str(target / data['exe']), '--play'], cwd=str(target), env=environment,
