@@ -3,12 +3,14 @@
 launcher uses (infamous_run: prepare/launch/build_env/save_experimental; backports_table)."""
 import os
 import threading
+import time
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import (Property, QAbstractListModel, QCoreApplication, QModelIndex, QObject, Qt, QTimer, QUrl,
                             Signal, Slot)
 
-from . import logic
+from . import beta_library, logic
 from .saves import Saves
 from .support import Support
 from .updates import Updates
@@ -17,6 +19,7 @@ import advanced_table  # noqa: E402
 import hardware  # noqa: E402
 import logtail  # noqa: E402
 import precompile  # noqa: E402
+import update_install  # noqa: E402
 
 LOG_LINES = 500           # lines the log panel keeps
 LOG_POLL_MS = 1000        # how often the game's log file is read for the panel
@@ -481,6 +484,46 @@ class Backend(QObject):
         self.logChanged.emit()
         self.stateChanged.emit()
         threading.Thread(target=self._run_game, daemon=True).start()
+
+    def playBeta(self, tag):
+        """One click from the stable launcher; the beta's own preparation/runtime is used."""
+        if self.updates.busy or self._play_state != 'idle' or not self._ready:
+            return
+        tlg_run.save_settings(self.settings)
+        self._play_state = 'launching'
+        self._log = [self.t_('upd_beta_starting', tag=tag)]
+        self.logChanged.emit()
+        self.stateChanged.emit()
+        threading.Thread(target=self._run_beta, args=(tag,), daemon=True).start()
+
+    def _run_beta(self, tag):
+        try:
+            running = self.updates.probes.get('running') or update_install.game_running
+            if running():
+                raise RuntimeError('Another game is running')
+            root = self.updates.library_dir()
+            session = beta_library.folder(root, tag) / ('beta-session-' + uuid.uuid4().hex + '.log')
+            self.process = beta_library.launch(root, tag, self.updates.data_dir(), session,
+                                               tlg_run.desktop_env(), tlg_run.detach_options())
+            tail = logtail.LogTail(session, LOG_LINES)
+            while self.process.poll() is None:
+                for line in tail.poll():
+                    if line.startswith('__ISS_GAME_LOG__='):
+                        self._play_state = 'running'
+                        self.stateChanged.emit()
+                        self.gameStarted.emit(line.split('=', 1)[1])
+                    elif self._play_state == 'launching':
+                        self.lineReceived.emit(line)
+                time.sleep(0.2)
+            for line in tail.poll(final=True):
+                if not line.startswith('__ISS_GAME_LOG__=') and self._play_state == 'launching':
+                    self.lineReceived.emit(line)
+            code = self.process.wait()
+        except Exception as error:
+            self.lineReceived.emit(str(error))
+            code = -1000
+        self.process = None
+        self.finished.emit(code)
 
     def _run_game(self):
         try:

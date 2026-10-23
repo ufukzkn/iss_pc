@@ -90,21 +90,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(update_install._read(self.handoffs[0][0])['target'], str(self.port))
         self.assertFalse(self.u.dialog)
 
-    def test_selected_beta_assets_are_used_and_selection_cannot_change_after_confirmation(self):
-        beta = dict(self.release, beta=True)
+    def test_selected_beta_is_installed_separately_without_handoff(self):
+        tag = 'beta-2026.10.23-abcdef1'
+        (self.payload / 'VERSION').write_text(tag)
+        update_install.write_manifest(self.payload, tag)
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w') as z:
+            for p in self.payload.iterdir():
+                z.write(p, p.name)
+        self.zip = data.getvalue()
+        asset = dict(self.release['assets'][0], size=len(self.zip),
+                     digest='sha256:'+hashlib.sha256(self.zip).hexdigest())
+        beta = dict(self.release, tag=tag, beta=True, assets=[asset])
         stable = dict(self.release, tag='v2026.10.18-abcd124', assets=[])
         self.u._on_fetched({'releases': [stable, beta]})
-        self.assertFalse(self.u.canInstall)
         self.u.selectRelease(1)
-        self.assertTrue(self.u.canInstall)
-        self.u.install()
-        self.u.selectRelease(0)
-        self.assertEqual(self.u.latest, beta['tag'])
-        self.u.answer('yes')
-        self.pump(lambda: self.backend.quit_called or bool(self.u._error))
+        self.backend.playBeta = mock.Mock()
+        self.u.downloadAndPlayBeta()
+        self.pump(lambda: not self.u.busy)
         self.assertEqual(self.u._error, '')
-        self.assertEqual(len(self.handoffs), 1)
-        self.assertEqual(update_install._read(self.handoffs[0][0])['version'], beta['tag'])
+        self.assertTrue(self.u.selectedBetaInstalled)
+        self.assertEqual(self.handoffs, [])
+        self.assertEqual((self.port/'launcher.exe').read_text(), 'old')
+        self.assertFalse(self.backend.quit_called)
+        self.assertFalse(self.u.canInstall)
+        self.backend.playBeta.assert_called_once_with(tag)
 
     def test_busy_and_source_checkout_cannot_install(self):
         self.running = True

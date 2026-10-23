@@ -15,7 +15,7 @@ import threading
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
-from . import releases, report, updater
+from . import beta_library, releases, report, updater
 from .logic import tlg_run
 import savemanager
 import update_install
@@ -29,6 +29,7 @@ class Updates(QObject):
     stepDone = Signal(object)      # ('downloaded' | 'installed' | 'prepared', value) or an error
     installProgress = Signal(object)
     inspected = Signal(object)
+    notesRequested = Signal()
 
     def __init__(self, backend, probes=None):
         """probes (tests, screenshots): 'fetch' -> f(version) returning the release dict or raising
@@ -40,6 +41,8 @@ class Updates(QObject):
         super().__init__(backend)
         self.backend = backend
         self.probes = probes or {}
+        self._auto_play_beta = False
+        self._betas = beta_library.list_installed(self.library_dir())
         self._checking = False
         self._error = ''
         self._phase = ''          # '' | download | install | prepare | handoff | ready
@@ -120,6 +123,8 @@ class Updates(QObject):
     def statusText(self):
         if self._checking:
             return self.t('upd_checking')
+        if self.selectedBetaInstalled and not self._error:
+            return self.t('upd_beta_ready', tag=self.latest)
         if self._phase == 'ready':
             return self.t('upd_installed', folder=str(self._new_dir))
         if self._error:
@@ -162,6 +167,89 @@ class Updates(QObject):
     def betaSelected(self):
         return bool((self.release or {}).get('beta'))
 
+    def library_dir(self):
+        if 'library_dir' in self.probes:
+            return Path(self.probes['library_dir']())
+        port = self.port_dir()
+        return port.parent if port.parent.name == 'infamous-betas' else port.parent / 'infamous-betas'
+
+    @Property('QVariantList', notify=changed)
+    def installedBetas(self):
+        return [{'tag': row['release']['tag'], 'size': _mb(row.get('bytes', 0))}
+                for row in self._betas]
+
+    @Property(bool, notify=changed)
+    def selectedBetaInstalled(self):
+        return self.betaSelected and any(r['release']['tag'] == self.latest for r in self._betas)
+
+    @Property(bool, notify=changed)
+    def canManageBetas(self):
+        return self.frozen() and not self.busy and not self._checking and not self.running() and not self._dialog
+
+    @Property(str, notify=changed)
+    def betaLibraryPath(self):
+        return str(self.library_dir())
+
+    @Slot(str)
+    def viewBeta(self, tag):
+        if self.busy or self._checking or self._dialog:
+            return
+        row = next((r for r in self._betas if r['release']['tag'] == tag), None)
+        if not row:
+            return
+        index = next((i for i, r in enumerate(self._releases) if r['tag'] == tag), None)
+        if index is None:
+            self._releases.append(row['release'])
+            index = len(self._releases) - 1
+        self.selectRelease(index)
+        self.notesRequested.emit()
+
+    @Slot(str)
+    def playBeta(self, tag):
+        if not self.canManageBetas:
+            return
+        try:
+            if not beta_library.record(self.library_dir(), tag):
+                return
+            self.backend.playBeta(tag)
+        except Exception as error:
+            self._fail(error)
+
+    @Slot()
+    def downloadAndPlayBeta(self):
+        if not self.betaSelected:
+            return
+        if self.selectedBetaInstalled:
+            self.playBeta(self.latest)
+        elif self.canInstall:
+            self._auto_play_beta = True
+            self._start_download()
+
+    @Slot(str)
+    def deleteBeta(self, tag):
+        if not self.canManageBetas or not any(r['release']['tag'] == tag for r in self._betas):
+            return
+        self._ask(self.t('upd_beta_delete'), self.t('upd_beta_delete_confirm', tag=tag),
+                  [('yes', self.t('upd_beta_delete'), 'primary'), ('no', self.t('upd_cancel'), 'ghost')],
+                  {'yes': lambda: self._delete_beta(tag)})
+
+    def _delete_beta(self, tag):
+        if self.running():
+            return
+        self._phase = 'cleanup'
+        self._progress = (0, 0)
+        self.changed.emit()
+        def work():
+            try:
+                if self.running(live=True):
+                    raise update_install.InstallError('busy', 'game')
+                beta_library.remove(self.library_dir(), tag, self.port_dir(), self.data_dir(),
+                                    self.backend.settings.get('game_dir'))
+                self.stepDone.emit(('beta-deleted', beta_library.list_installed(self.library_dir())))
+            except Exception as error:
+                self.stepDone.emit(error)
+        threading.Thread(target=work, daemon=True).start()
+
     @Property(str, notify=changed)
     def baselineTitle(self):
         baseline = (self.release or {}).get('baseline') or {}
@@ -186,6 +274,8 @@ class Updates(QObject):
 
     @Property(str, notify=changed)
     def introText(self):
+        if self.betaSelected:
+            return self.t('upd_beta_intro')
         return self.t('upd_intro_inplace' if self.windows() else 'upd_intro')
 
     @Property(bool, notify=changed)
@@ -302,7 +392,9 @@ class Updates(QObject):
         """A newer release with a package for this platform, in a packaged build, nothing running."""
         if not self.frozen() or self._checking or self._phase or not self.available:
             return False
-        if self.windows() and (self.running() or self._in_checkout()):
+        if self.betaSelected and (self.selectedBetaInstalled or self.running()):
+            return False
+        if self.windows() and (self.running() or (not self.betaSelected and self._in_checkout())):
             return False
         try:
             updater.pick_assets(self.release, nt=self.windows())
@@ -388,6 +480,8 @@ class Updates(QObject):
         """Why there is no "Download and install" here (a git checkout), or where Windows puts it."""
         if not self.frozen():
             return self.t('upd_source_hint')
+        if self.betaSelected:
+            return self.t('upd_beta_location', folder=str(self.library_dir()))
         return self.t('upd_same_path_hint', folder=str(self.port_dir())) if self.windows() else ''
 
     @Property('QVariantMap', notify=dialogChanged)
@@ -409,6 +503,7 @@ class Updates(QObject):
             handler()
 
     def _fail(self, error):
+        self._auto_play_beta = False
         self._phase, self._progress = '', (0, 0)
         self._error = self.t('upd_err_' + getattr(error, 'kind', 'write'),
                              detail=getattr(error, 'detail', str(error)))
@@ -433,6 +528,10 @@ class Updates(QObject):
             self._fail(error)
             return
         port = self.port_dir()
+        if self.betaSelected:
+            self._auto_play_beta = False
+            self._start_download()
+            return
         if self.windows():
             self._ask(self.t('upd_install'),
                       self.t('upd_confirm', tag=self.release['tag'], folder=str(port),
@@ -462,7 +561,7 @@ class Updates(QObject):
             return
         archive = self._work / package['name']
         # Windows replaces the files in place, so the data folder is never copied.
-        data = None if windows else updater.data_to_copy(port, self.data_dir())
+        data = None if windows or self.betaSelected else updater.data_to_copy(port, self.data_dir())
         opener = self.probes.get('opener')
         self._cancel.clear()
         self._handed, self._archive = False, None
@@ -505,10 +604,20 @@ class Updates(QObject):
             self._archive, self._verified = value
             self._phase = ''
             self.changed.emit()
-            if self.windows():
+            if self.betaSelected:
+                self._install_beta()
+            elif self.windows():
                 self._start_prepare()
             else:
                 self._ask_install()
+        elif step in ('beta-installed', 'beta-deleted'):
+            self._phase = ''
+            self._betas = value
+            self._work = None
+            play, self._auto_play_beta = self._auto_play_beta, False
+            self.changed.emit()
+            if play and step == 'beta-installed':
+                self.playBeta(self.latest)
         elif step == 'installed':
             self._new_dir, self._phase = value, 'ready'
             shutil.rmtree(self._work, ignore_errors=True)
@@ -523,6 +632,24 @@ class Updates(QObject):
                 self.probes['quit']()
             else:
                 self.backend._quit_app()
+
+    def _install_beta(self):
+        archive, release = self._archive, dict(self.release)
+        root, exe, workdir = self.library_dir(), self.exe_name(), self._work
+        self._install_stage = ''
+        self._phase = 'prepare'
+        self._progress = (0, 0)
+        self.changed.emit()
+        def work():
+            try:
+                beta_library.install(archive, root, release, exe,
+                                     progress=lambda *value: self.installProgress.emit(value))
+                if workdir:
+                    shutil.rmtree(workdir)
+                self.stepDone.emit(('beta-installed', beta_library.list_installed(root)))
+            except Exception as error:
+                self.stepDone.emit(error)
+        threading.Thread(target=work, daemon=True).start()
 
     def _ask_install(self):
         """Step 2 (Linux): the package is here and checked; ask before installing it."""

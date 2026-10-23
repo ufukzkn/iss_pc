@@ -31,6 +31,38 @@ def main():
     if args[:1] == ['--clear-shader-cache']:
         sys.exit(tlg_run.main(args))
     if args[:1] == ['--play']:
+        # A windowless frozen executable has no stdout. The stable launcher follows this
+        # session log during beta preparation, then switches to the native game's log.
+        session = os.environ.get('ISS_BETA_SESSION_LOG')
+        if session:
+            import update_install
+            lock = Path(os.environ.get('ISS_BETA_SESSION_LOCK') or str(Path(session).with_suffix('.lock')))
+            try:
+                with update_install.install_lock(lock.parent, lock.name):
+                    # Keep the previous preparation log plus this run, without touching the
+                    # shared native game logs or another active session's output.
+                    if Path(session).name.startswith('beta-session-'):
+                        previous = sorted(Path(session).parent.glob('beta-session-*.log'),
+                                          key=lambda path: path.stat().st_mtime, reverse=True)
+                        for old in previous[1:]:
+                            try:
+                                old.unlink()
+                            except OSError:
+                                pass
+                    sys.stdout = open(session, 'w', encoding='utf-8', buffering=1)
+                    sys.stderr = sys.stdout
+                    launch = tlg_run.launch
+                    def report_launch(*values, **options):
+                        process, log = launch(*values, **options)
+                        print('__ISS_GAME_LOG__=' + str(log), flush=True)
+                        return process, log
+                    tlg_run.launch = report_launch
+                    sys.exit(tlg_run.main(args[1:]))
+            except update_install.InstallError:
+                sys.exit(1)
+        elif sys.stdout is None:
+            sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+            sys.stderr = sys.stdout
         sys.exit(tlg_run.main(args[1:]))
     if args[:1] == ['--selftest']:  # CI smoke test of the frozen launcher: opens offscreen, touches nothing
         try:
