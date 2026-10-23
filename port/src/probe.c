@@ -1038,13 +1038,18 @@ int main(int argc, char **argv) {
     }
     {
         /* The first log line says which build and which game this is (players often can't tell
-         * which zip they ran, or which dump: only CUSA00223 1.07 is supported). */
+         * which zip they ran; preserve the actual title and metadata version). */
         char path[4096], serial[32] = "?", version[32] = "?";
         snprintf(path, sizeof(path), "%s/sce_sys/param.sfo", app0 ? app0 : ".");
         sfo_value(path, "TITLE_ID", serial, sizeof(serial), NULL);
         sfo_value(path, "APP_VER", version, sizeof(version), NULL);
+        const char *verified = getenv("ISS_VERIFIED_APP_VER");
+        const int known_title = !strcmp(serial,"CUSA00223") || !strcmp(serial,"CUSA00004");
+        const char *effective = known_title && verified && !strcmp(verified,"01.07") ? verified : version;
         printf("Build: %s (built %s %s); game %s %s; threads inherit the creator's MXCSR/x87 control\n",
-               TLG_BUILD_COMMIT, __DATE__, __TIME__, serial, version);
+               TLG_BUILD_COMMIT, __DATE__, __TIME__, serial, effective);
+        if (strcmp(effective,version))
+            printf("Game version: verified executable %s; metadata APP_VER %s (unchanged)\n",effective,version);
     }
     if (!cpu_supported(missing, sizeof missing)) return 20;
     if (cpu_missing_sets) printf("CPU: missing %s\n", missing);

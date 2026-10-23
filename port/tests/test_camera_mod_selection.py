@@ -24,21 +24,12 @@ class CameraModTests(unittest.TestCase):
         mod_path.start()
         self.addCleanup(mod_path.stop)
 
-    def test_eu_old_metadata_requires_verified_elf(self):
-        import hashlib
-        import prepare
-        import infamous_patches
-        game = Path(self.temp.name) / 'game'
-        (game / 'sce_sys').mkdir(parents=True)
-        (game / 'sce_sys/param.sfo').write_bytes(b'fixture')
-        with mock.patch.object(prepare, 'sfo', return_value={'TITLE_ID': 'CUSA00004'}), \
-             mock.patch.object(infamous_patches, 'read_eboot_elf', return_value=b'fixture'), \
-             mock.patch.object(hashlib, 'sha256') as digest:
-            digest.return_value.hexdigest.return_value = 'b3afd173a379f83e1e408e71fdef22b78f93092d332b79decd48a18a08bfc605'
-            self.assertTrue(run.camera_build_supported(game, '01.00'))
-            digest.return_value.hexdigest.return_value = '0' * 64
-            self.assertFalse(run.camera_build_supported(game, '01.00'))
-        self.assertFalse(run.camera_build_supported(game, '01.06'))
+    def test_camera_requires_supported_title_and_effective_version(self):
+        from iss_compat import GameBuild
+        for title, version, expected in [('CUSA00004', '01.07', True), ('CUSA00223', '01.07', True), ('CUSA00004', '01.00', False), ('CUSA99999', '01.07', False)]:
+            build = GameBuild(title, version, version, version, False, frozenset({title}))
+            with mock.patch.object(run.iss_compat, 'identify', return_value=build):
+                self.assertEqual(run.camera_build_supported(self.temp.name), expected)
 
     def test_selection_preserves_other_mods_and_defaults_off(self):
         self.assertEqual(set(run.camera_mod_environment().values()), {'1'})
@@ -52,13 +43,13 @@ class CameraModTests(unittest.TestCase):
         self.assertFalse(run.camera_mod_enabled())
 
     def test_catalogue_scoped_to_version(self):
-        with mock.patch.object(run.mod_patches, 'game_app_version', return_value='01.07'), \
+        with mock.patch.object(run.iss_compat, 'identify', return_value=run.iss_compat.GameBuild('CUSA00004', '01.00', '01.07', '01.07', True, run.iss_compat.TITLE_IDS)), \
              mock.patch.object(run.mod_patches, 'external_patches', return_value=[]):
             rows = run.list_mods({'game_dir': self.temp.name})
             self.assertEqual(rows[0][0], run.CAMERA_MOD_KEY)
             self.assertFalse(rows[0][3])
             self.assertEqual(len(rows), 1)
-        with mock.patch.object(run.mod_patches, 'game_app_version', return_value='01.06'), \
+        with mock.patch.object(run.iss_compat, 'identify', return_value=run.iss_compat.GameBuild('CUSA00004', '01.06', '01.06', '01.06', False, frozenset({'CUSA00004'}))), \
              mock.patch.object(run.mod_patches, 'external_patches', return_value=[]):
             self.assertEqual(run.list_mods({'game_dir': self.temp.name}), [])
 

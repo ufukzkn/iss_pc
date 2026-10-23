@@ -2,7 +2,7 @@
 
 The camera mod accepts the verified 1.07 executable in the European CUSA00004 dump as well as CUSA00223. The tested European merged dump retains APP_VER 01.00 despite containing the exact same unwrapped ELF as the verified US 1.07 build (SHA-256 b3afd173a379f83e1e408e71fdef22b78f93092d332b79decd48a18a08bfc605).
 
-For that old European metadata, the launcher offers the camera mod only when the entire unwrapped ELF matches this known hash. It does not rewrite param.sfo or reinterpret VERSION as APP_VER. Ordinary XML mods retain their original version and title filtering.
+For that old European metadata, the launcher offers the camera mod only when the entire unwrapped ELF matches this known hash. It does not rewrite param.sfo or reinterpret VERSION as APP_VER. The shared build detector now also exposes 1.07 eboot XML mods for either supported title when this hash matches. See [regional build compatibility](CUSA_COMPATIBILITY.md).
 
 Runtime title/version, executable-segment and instruction-signature checks remain mandatory for both camera hooks. An unexpected signature still disables the hook. The option remains off by default and uses the existing 1.5x camera/diagonal slowdown implementation.
 

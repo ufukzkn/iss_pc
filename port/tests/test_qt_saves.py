@@ -41,7 +41,7 @@ class SavesControllerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        patcher = mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.root / 'cfg')})
+        patcher = mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.root / 'cfg'), 'APPDATA': str(self.root / 'cfg')})
         patcher.start()
         self.addCleanup(patcher.stop)
         for name in ('ISS_USER_DIR', 'TLG_USER_DIR'):
@@ -117,6 +117,18 @@ class SavesControllerTests(unittest.TestCase):
         self.assertEqual([], self.saves.slots)
         self.assertEqual(1, len(self.saves.backups))
         self.assertIn(self.saves.backups[0]['name'], self.saves.message)
+
+    def test_eu_slot_is_visible_and_deletion_preserves_the_us_slot(self):
+        put_slot(self.default, 'infamousssUser0', body=b'US')
+        with mock.patch.object(logic.userdata, 'SERIAL', 'CUSA00004'):
+            put_slot(self.default, 'infamousssUser0', body=b'EU')
+        self.saves.reload()
+        self.assertEqual({s['id'] for s in self.saves.slots}, {'1/infamousssUser0', '1/CUSA00004/infamousssUser0'})
+        self.saves.askDelete('1/CUSA00004/infamousssUser0')
+        self.saves.answer('ok')
+        self.assertEqual(body_of(self.default, 'infamousssUser0'), b'US')
+        self.assertFalse((self.default / 'savedata/1/CUSA00004/infamousssUser0').exists())
+        self.assertEqual(len(self.saves.backups), 1)
 
     def test_actions_are_refused_while_the_game_runs(self):
         put_slot(self.default, 'infamousssUser0')

@@ -29,6 +29,7 @@ from qt import gfxlogic
 FORMAT = 'iss-preset'
 VERSION = 1
 GAME = 'CUSA00223'
+GAME_IDS = frozenset({'CUSA00223', 'CUSA00004'})
 SUFFIX = '.iss-preset.json'
 MAX_BYTES = 1 << 20
 
@@ -203,7 +204,7 @@ def parse_preset(data, profile=''):
         return None, [Problem('newer', str(version), True)]
     problems = []
     game = data.get('game')
-    if game != GAME:
+    if game not in GAME_IDS:
         problems.append(Problem('game', str(game), False))
     raw_settings, raw_items = data.get('settings', {}), data.get('items', {})
     if not isinstance(raw_settings, dict) or not isinstance(raw_items, dict) or not (raw_settings or raw_items):

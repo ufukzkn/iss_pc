@@ -1,4 +1,4 @@
-/* inFAMOUS Second Son CUSA00223 01.07: effective angular-speed limits.
+/* inFAMOUS Second Son CUSA00223/CUSA00004 01.07: effective angular-speed limits.
  * Verified ELF SHA256 b3afd173a379f83e1e408e71fdef22b78f93092d332b79decd48a18a08bfc605.
  * No pad scaling. This hook replays two stores after zoom/mode preferences.
  * Adaptive input gain, acceleration, pitch constraints and angle integration remain in-game.
@@ -11,11 +11,11 @@
 #include <errno.h>
 #include <math.h>
 
-/* Known European merged 1.07 dumps can retain APP_VER 01.00. Instruction signatures
+/* Merged 1.07 dumps can retain APP_VER 01.00. Instruction signatures
  * below remain mandatory; these metadata values alone never authorize a patch. */
 static inline int iss_camera_title_supported(const char *serial, const char *version) {
-    return (!strcmp(serial,"CUSA00223") && !strcmp(version,"01.07")) ||
-           (!strcmp(serial,"CUSA00004") && (!strcmp(version,"01.07") || !strcmp(version,"01.00")));
+    return (!strcmp(serial,"CUSA00223") || !strcmp(serial,"CUSA00004")) &&
+           (!strcmp(version,"01.07") || !strcmp(version,"01.00"));
 }
 
 #define ISS_CAMERA_SITE 0x14d943u

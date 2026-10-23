@@ -237,7 +237,8 @@ class Launcher:
         titles = ttk.Frame(header)
         titles.pack(side='left', fill='y')
         ttk.Label(titles, text='inFAMOUS Second Son', font=('TkDefaultFont', 22, 'bold')).pack(anchor='w')
-        ttk.Label(titles, text='PC — CUSA00223 v1.07', foreground='#777').pack(anchor='w')
+        self.game_identity = ttk.Label(titles, foreground='#777')
+        self.game_identity.pack(anchor='w')
         credits = ttk.Frame(header)
         credits.pack(side='right', anchor='ne')
         ttk.Label(credits, text=self.t('port_by'), foreground='#777').pack(anchor='e')
@@ -518,6 +519,8 @@ class Launcher:
         self.refresh_status()
 
     def refresh_status(self):
+        build = tlg_run.iss_compat.identify(self.settings['game_dir'])
+        self.game_identity.configure(text=f'PC — {build.title_id or "?"} v{build.effective_app_version or "?"}')
         problems = tlg_run.check_game(self.settings['game_dir'])
         texts = [self.t('not_built') if k == 'not_built' else self.t(k, detail=d) if k in tlg_run.TEXT
                  else f"{self.t('missing')}: {d}" for k, d in problems]

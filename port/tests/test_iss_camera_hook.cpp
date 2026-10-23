@@ -17,7 +17,7 @@ int main(int argc,char **argv) {
     assert(iss_camera_title_supported("CUSA00223","01.07"));
     assert(iss_camera_title_supported("CUSA00004","01.07"));
     assert(iss_camera_title_supported("CUSA00004","01.00"));
-    assert(!iss_camera_title_supported("CUSA00223","01.00"));
+    assert(iss_camera_title_supported("CUSA00223","01.00"));
     assert(!iss_camera_title_supported("CUSA99999","01.07"));
     assert(!iss_camera_title_supported("CUSA00004","01.06"));
     float scale;

@@ -343,9 +343,11 @@ def sfo_game(game_dir, read_sfo):
     """(title id, app version) of <game>/sce_sys/param.sfo; ('', '') without it."""
     try:
         values = read_sfo((Path(game_dir) / 'sce_sys' / 'param.sfo').read_bytes())
-    except OSError:
+    except (OSError, ValueError):
         return '', ''
-    return str(values.get('TITLE_ID', '')), str(values.get('APP_VER', ''))
+    import infamous_run
+    build = infamous_run.iss_compat.identify(game_dir, metadata=values)
+    return str(values.get('TITLE_ID', '')), str(build.effective_app_version or '')
 
 
 def current_version(port_dirs, log_dir):
@@ -368,9 +370,15 @@ def gather(port_dirs, log_dir, game_dir, read_sfo, probes=None):
     probes = probes or {}
     pick = lambda name, default: probes[name]() if name in probes else default()   # noqa: E731
     title, app_ver = pick('game', lambda: sfo_game(game_dir, read_sfo))
+    game = {'title_id': title, 'app_ver': app_ver}
+    if 'game' not in probes:
+        import infamous_run
+        build = infamous_run.iss_compat.identify(game_dir)
+        if build.verified_107:
+            game.update(metadata_app_ver=build.metadata_app_version, metadata_version=build.package_version, executable_verified=True)
     return {
         'version': pick('version', lambda: current_version(port_dirs, log_dir)),
-        'game': {'title_id': title, 'app_ver': app_ver},
+        'game': game,
         'os': pick('os', os_text),
         'cpu': pick('cpu', cpu_info),
         'ram': pick('ram', ram_bytes),
@@ -386,9 +394,12 @@ def hardware_rows(info, t):
     gpu = info['gpu']
     game = info['game']
     ram = info['ram']
+    game_text = f"{game['title_id']} {game['app_ver']}".strip()
+    if game.get('metadata_app_ver') and game['metadata_app_ver'] != game['app_ver']:
+        game_text += f" (APP_VER {game['metadata_app_ver']}; verified ELF)"
     rows = [
         (t('rep_row_version'), info['version'] or na),
-        (t('rep_row_game'), (f"{game['title_id']} {game['app_ver']}".strip()) or na),
+        (t('rep_row_game'), game_text or na),
         (t('rep_row_os'), info['os'] or na),
         (t('rep_row_cpu'), f"{info['cpu']['name']} ({features})"),
         (t('rep_row_ram'), f'{ram / 2 ** 30:.1f} GiB' if ram else na),

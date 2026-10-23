@@ -217,6 +217,11 @@ def main():
     p.add_argument('--game-dir',type=Path,default=Path(os.environ.get('TLG_GAME_DIR','../CUSA01623')))
     a=p.parse_args()
     title=game_title_id(a.game_dir)
+    from iss_compat import TITLE_IDS
+    if title in TITLE_IDS:
+        from infamous_patches import prepare
+        print('\n'.join(prepare(a.game_dir, a.out, a.patches_dir, a.patches_config)))
+        return
     profile=game_profile(title)
     if not profile:
         write_patches(a.out,[])

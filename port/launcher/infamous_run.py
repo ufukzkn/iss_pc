@@ -35,6 +35,7 @@ OUT_DIR = PORT_DIR / 'out'
 BUILTIN_MODS = (PORT_DIR / 'patches' / 'iss_builtin_intro.xml',)
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 import mod_patches  # noqa: E402
+import iss_compat  # noqa: E402
 
 
 def user_dir():
@@ -82,36 +83,21 @@ def camera_pitch_mod_enabled():
     return camera_mod_enabled()
 
 
-def camera_build_supported(game, app_version):
-    if app_version == '01.07':
-        return True  # Existing catalogue behavior; runtime still verifies title and code.
-    if app_version != '01.00':
-        return False
-    try:
-        from prepare import sfo
-        from infamous_patches import read_eboot_elf
-        import hashlib
-        metadata = sfo((Path(game) / 'sce_sys/param.sfo').read_bytes())
-        if metadata.get('TITLE_ID') != 'CUSA00004':
-            return False
-        elf = read_eboot_elf(game)
-        # The verified 1.07 executable, identical across the tested US/EU dumps.
-        return elf is not None and hashlib.sha256(elf).hexdigest() == \
-            'b3afd173a379f83e1e408e71fdef22b78f93092d332b79decd48a18a08bfc605'
-    except (OSError, ValueError):
-        return False
+def camera_build_supported(game):
+    build = iss_compat.identify(game)
+    return build.title_id in iss_compat.TITLE_IDS and build.effective_app_version == '01.07'
 
 
 def list_mods(settings):
     """[(key, name, note, enabled)] for the Mods tab: every shadPS4/GoldHEN cheat XML found in
     the mods folder for this game's version, with its current enabled state."""
-    from infamous_patches import TITLE_IDS
-    app_version = mod_patches.game_app_version(settings['game_dir'])
+    build = iss_compat.identify(settings['game_dir'])
+    app_version = build.effective_app_version
     found = mod_patches.external_patches(
-        mods_dir(), app_version, TITLE_IDS, builtin_files=BUILTIN_MODS)
+        mods_dir(), app_version, build.mod_title_ids, builtin_files=BUILTIN_MODS)
     selected = {key for key, _, _ in mod_patches.external_selection(found, mods_config())}
     rows = [(key, meta.get('Name'), meta.get('Note', ''), key in selected) for key, _, meta in found]
-    if camera_build_supported(settings['game_dir'], app_version):
+    if camera_build_supported(settings['game_dir']):
         rows.append((CAMERA_MOD_KEY, 'Camera improvements (1.5x + slowdown fix)',
                      'Raises horizontal and vertical camera speed limits by 50% and prevents '
                      'diagonal slowdown at vertical viewing limits with zoom off. '
@@ -373,13 +359,13 @@ def save_settings(settings):
 # headers, the same whatever tool decrypted it (base 1.00 is 0x933850 / 85,115,231 bytes).
 EBOOT_107 = (0x61dfd0, 133_846_143)
 # APP_VER of the update's param.sfo; mods (cheat XML) are chosen by it.
-APP_VER_107 = '01.07'
+APP_VER_107 = iss_compat.APP_VER_107
 
 # Messages about the player's game folder (en, pt); the launcher shows them in its language,
 # the command line prints both. {detail} names the file.
-_COPY_UPDATE = ('Copy every file of update 1.07 (CUSA00223-patch: eboot.bin, sce_module/, sce_sys/ and the rest) '
+_COPY_UPDATE = ('Copy every file of update 1.07 (matching CUSA00004/CUSA00223 patch: eboot.bin, sce_module/, sce_sys/ and the rest) '
                 'over the base game folder, replacing the files; see "Required game files" in the README.',
-                'Copie todos os arquivos do update 1.07 (CUSA00223-patch: eboot.bin, sce_module/, sce_sys/ e o resto) '
+                'Copie todos os arquivos do update 1.07 (matching CUSA00004/CUSA00223 patch: eboot.bin, sce_module/, sce_sys/ e o resto) '
                 'por cima da pasta do jogo base, substituindo os arquivos; veja "Arquivos do jogo necessários" no README.')
 TEXT = {
     'old_module': ('{detail} is not the one from update 1.07 (it comes from the base game 1.00 or another '
@@ -387,8 +373,8 @@ TEXT = {
                    'O {detail} não é o do update 1.07 (é do jogo base 1.00 ou de outra versão) e o jogo não '
                    'abre com ele. ' + _COPY_UPDATE[1]),
     'other_eboot': ('eboot.bin is not the one from update 1.07 ({detail}); the port is only tested with '
-                    'CUSA00223 (US) 1.07. ' + _COPY_UPDATE[0],
-                    'O eboot.bin não é o do update 1.07 ({detail}); o port só é testado com o CUSA00223 (EUA) '
+                    'verified CUSA00223/CUSA00004 1.07 executables. ' + _COPY_UPDATE[0],
+                    'O eboot.bin não é o do update 1.07 ({detail}); o port só é testado com o CUSA00223/CUSA00004 '
                     '1.07. ' + _COPY_UPDATE[1]),
     'old_param': ('{detail} is not the one from update 1.07: the game starts, but cheats (mods) made for 1.07 '
                   'are not listed. Copy the 1.07 param.sfo (on the PS4: /system_data/priv/appmeta/CUSA00223/param.sfo) '
@@ -468,7 +454,7 @@ def check_game(game_dir):
             if (entry, size) != EBOOT_107:
                 problems.append(('other_eboot', f'entry={entry:#x}, image={size:,} bytes'))
             else:  # the base 1.00 param.sfo beside the 1.07 eboot: no 1.07 mods
-                version = mod_patches.game_app_version(game)
+                version = iss_compat.identify(game).effective_app_version
                 if version not in (None, APP_VER_107):
                     problems.append(('old_param', f'sce_sys/param.sfo (APP_VER {version})'))
         except (OSError, ValueError, KeyError, StopIteration) as error:
@@ -507,7 +493,7 @@ def update_ini(path, values):
 
 # The serial the GPU backend names this game's shader cache after (another region's copy: its
 # param.sfo TITLE_ID, read from the game folder).
-SHADER_CACHE_SERIALS = ('CUSA00223',)
+SHADER_CACHE_SERIALS = ('CUSA00223', 'CUSA00004')
 
 
 def shader_cache_serials(settings):
@@ -841,6 +827,10 @@ def build_env(settings, extra=None):
     # leaves scale variables in the launcher's inherited environment.
     env.update(camera_mod_environment())
     env['ISS_CAMERA_PREVENT_PITCH_SLOWDOWN'] = '1' if camera_pitch_mod_enabled() else '0'
+    build = iss_compat.identify(settings['game_dir'])
+    env.pop('ISS_VERIFIED_APP_VER', None)
+    if build.verified_107:
+        env['ISS_VERIFIED_APP_VER'] = build.effective_app_version
     return env
 
 

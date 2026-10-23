@@ -18,8 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mod_patches
 
-TITLE_IDS = {'CUSA00223'}
-SELF_MAGIC = b'O\x15=\x1d'
+from iss_compat import TITLE_IDS, identify, read_eboot_elf
 BUILTIN_MODS = (Path(__file__).resolve().parent.parent / 'patches' / 'iss_builtin_intro.xml',)
 
 
@@ -29,21 +28,6 @@ def write_patch_file(path, writes):
     for offset, data, _ in writes:
         blob += struct.pack('<QQ', offset, len(data)) + data
     Path(path).write_bytes(blob)
-
-
-def read_eboot_elf(game_dir):
-    """eboot.bin as a plain ELF, unwrapping a SELF dump of any version; None if unreadable."""
-    try:
-        eboot = (Path(game_dir) / 'eboot.bin').read_bytes()
-    except OSError:
-        return None
-    if eboot[:4] == SELF_MAGIC:
-        try:
-            from prepare import parse_self
-            return bytes(parse_self(eboot)[0])
-        except ValueError:
-            return None
-    return eboot
 
 
 def prepare(game_dir, out_dir, mods_dir=None, mods_config=None):
@@ -57,9 +41,12 @@ def prepare(game_dir, out_dir, mods_dir=None, mods_config=None):
         else:
             try:
                 segments = mod_patches.eboot_segments(eboot)
-                app_version = mod_patches.game_app_version(game_dir)
+                build = identify(game_dir, elf=eboot)
+                app_version = build.effective_app_version
                 found = mod_patches.external_patches(
-                    mods_dir, app_version, TITLE_IDS, builtin_files=BUILTIN_MODS)
+                    mods_dir, app_version, build.mod_title_ids, builtin_files=BUILTIN_MODS)
+                if build.verified_107 and build.metadata_app_version != app_version:
+                    lines.append(f'Mods: verified 1.07 executable; metadata APP_VER {build.metadata_app_version} retained')
                 selected = mod_patches.external_selection(found, mods_config)
                 writes = mod_patches.compile_external(selected, segments, eboot=eboot)
             except (OSError, ValueError, struct.error) as error:

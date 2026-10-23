@@ -4,6 +4,8 @@ import re
 
 root = Path(__file__).resolve().parents[1]
 checks = {
+    'port/scripts/iss_compat.py': ('ELF_107_SHA256', 'effective_app_version', 'mod_title_ids'),
+    'port/scripts/infamous_patches.py': ('identify(game_dir, elf=eboot)', 'build.mod_title_ids'),
     'port/scripts/content_profile.py': ('G3CONT02', 'installed_addons'),
     'port/src/probe.c': ('G3CONT02', 'runtime_content_set_addons', 'install_iss_camera_speed', 'install_iss_pitch_safeguard'),
     'port/src/iss_camera_hook.h': ('CUSA00004', 'iss_camera_signature_match'),

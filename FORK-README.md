@@ -37,6 +37,10 @@ than silently dropping a feature. Experimental native-pass fixes stay on a separ
   [Build checks and limitations](docs/CUSA00004_CAMERA.md) apply; this native camera
   mod is separate from the fork's right-stick input gain setting.
 
+## Regional builds
+
+CUSA00004 and CUSA00223 share 1.07 eboot XML mods when their executable matches the verified build. Merged dumps retaining APP_VER 01.00 are recognized as effective 1.07 after an ELF hash check. Metadata, regional saves and DLC identities remain intact. See [regional compatibility](docs/CUSA_COMPATIBILITY.md).
+
 ## Updates
 
 Use the ordinary Qt launcher: **Updates > Check for updates > Download and install**.
