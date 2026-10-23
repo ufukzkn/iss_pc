@@ -61,8 +61,7 @@ def main():
             except update_install.InstallError:
                 sys.exit(1)
         elif sys.stdout is None:
-            sys.stdout = open(os.devnull, 'w', encoding='utf-8')
-            sys.stderr = sys.stdout
+            tlg_run.attach_stdio()
         sys.exit(tlg_run.main(args[1:]))
     if args[:1] == ['--selftest']:  # CI smoke test of the frozen launcher: opens offscreen, touches nothing
         try:
