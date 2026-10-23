@@ -86,7 +86,7 @@ class ChipTests(unittest.TestCase):
         texts = [c['text'] for c in chips]
         self.assertIn('NVIDIA GeForce RTX 2060 · Vulkan 1.3', texts)
         self.assertIn('Pasta do jogo OK · update 1.07', texts)
-        self.assertIn('Perfil: Recomendado', texts)
+        self.assertIn('Gráficos: automático para o seu hardware', texts)   # hardware.py picks the setup
         self.assertIn('Controle: DualSense', texts)
         self.assertTrue(any(t.startswith('Cache de shaders: 218') for t in texts))
         self.assertTrue(all(c['level'] == 'ok' for c in chips))
@@ -110,8 +110,11 @@ class ChipTests(unittest.TestCase):
         self.assertIn('Port não compilado (rode o build.sh)', texts)
 
     def test_profile_counts_changes_like_the_tk_window(self):
-        chips, _ = self.chips(states={'BP06': '1', 'BP01': '0'})
+        # The profile chip counts the player's changes only in the advanced mode.
+        chips, _ = self.chips(dict(PT, advanced_mode=True), states={'BP06': '1', 'BP01': '0'})
         self.assertIn('Perfil: personalizado (2 mudanças)', [c['text'] for c in chips])
+        chips, _ = self.chips(dict(PT, advanced_mode=True), states={})
+        self.assertIn('Perfil: Recomendado', [c['text'] for c in chips])
 
     def test_english(self):
         chips, _ = self.chips(EN, gpu=('GPU', ''), pad=None)
@@ -237,6 +240,7 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(backend.canPlay)
         self.assertEqual('Continuar · Welcome to Seattle — 8%', backend.playSubtitle)
 
+    @mock.patch.dict(os.environ, {'ISS_ADVANCED': '1'})   # the Fixes screen: advanced mode only
     def test_set_fix_saves_and_profile_follows(self):
         backend, saved = self.make()
         self.assertTrue(backend.profileIsRecommended)

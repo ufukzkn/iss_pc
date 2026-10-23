@@ -21,6 +21,7 @@ import time
 
 import addons
 import backports_table
+import hardware
 import logtail
 import shader_cache
 import padsettings
@@ -56,6 +57,52 @@ def mods_config():
     return Path(os.environ.get('ISS_MODS_CONFIG') or user_dir() / 'mods.json')
 
 
+# Native runtime feature, stored with the existing Mods selections. This key is not
+# an XML patch: the runtime allocates a guarded trampoline before guest execution.
+CAMERA_MOD_KEY = 'native/camera-speed-1.5x'
+CAMERA_PITCH_MOD_KEY = 'native/camera-prevent-pitch-slowdown'
+
+
+def camera_mod_enabled():
+    try:
+        config = json.loads(mods_config().read_text())
+        return (isinstance(config, dict) and
+                CAMERA_MOD_KEY in config.get('enabled', []) and
+                CAMERA_MOD_KEY not in config.get('disabled', []))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def camera_mod_environment():
+    scale = '1.5' if camera_mod_enabled() else '1'
+    return {'ISS_CAMERA_PAN_SCALE': scale, 'ISS_CAMERA_TILT_SCALE': scale}
+
+
+def camera_pitch_mod_enabled():
+    # Both runtime features follow the single saved camera selection.
+    return camera_mod_enabled()
+
+
+def camera_build_supported(game, app_version):
+    if app_version == '01.07':
+        return True  # Existing catalogue behavior; runtime still verifies title and code.
+    if app_version != '01.00':
+        return False
+    try:
+        from prepare import sfo
+        from infamous_patches import read_eboot_elf
+        import hashlib
+        metadata = sfo((Path(game) / 'sce_sys/param.sfo').read_bytes())
+        if metadata.get('TITLE_ID') != 'CUSA00004':
+            return False
+        elf = read_eboot_elf(game)
+        # The verified 1.07 executable, identical across the tested US/EU dumps.
+        return elf is not None and hashlib.sha256(elf).hexdigest() == \
+            'b3afd173a379f83e1e408e71fdef22b78f93092d332b79decd48a18a08bfc605'
+    except (OSError, ValueError):
+        return False
+
+
 def list_mods(settings):
     """[(key, name, note, enabled)] for the Mods tab: every shadPS4/GoldHEN cheat XML found in
     the mods folder for this game's version, with its current enabled state."""
@@ -64,7 +111,15 @@ def list_mods(settings):
     found = mod_patches.external_patches(
         mods_dir(), app_version, TITLE_IDS, builtin_files=BUILTIN_MODS)
     selected = {key for key, _, _ in mod_patches.external_selection(found, mods_config())}
-    return [(key, meta.get('Name'), meta.get('Note', ''), key in selected) for key, _, meta in found]
+    rows = [(key, meta.get('Name'), meta.get('Note', ''), key in selected) for key, _, meta in found]
+    if camera_build_supported(settings['game_dir'], app_version):
+        rows.append((CAMERA_MOD_KEY, 'Camera improvements (1.5x + slowdown fix)',
+                     'Raises horizontal and vertical camera speed limits by 50% and prevents '
+                     'diagonal slowdown at vertical viewing limits with zoom off. '
+                     'Zoomed aiming and vertical limits remain unchanged. '
+                     'Requires a verified CUSA00223/CUSA00004 1.07 build. Applies on the next game launch.',
+                     camera_mod_enabled()))
+    return rows
 
 
 def set_mod_enabled(key, enabled):
@@ -75,6 +130,9 @@ def set_mod_enabled(key, enabled):
     except (OSError, ValueError):
         data = {}
     on, off = set(data.get('enabled', [])), set(data.get('disabled', []))
+    if key == CAMERA_MOD_KEY:
+        on.discard(CAMERA_PITCH_MOD_KEY)
+        off.discard(CAMERA_PITCH_MOD_KEY)
     (on if enabled else off).add(key)
     (off if enabled else on).discard(key)
     path.write_text(json.dumps({'enabled': sorted(on), 'disabled': sorted(off)}, indent=2))
@@ -282,6 +340,11 @@ DEFAULT_SETTINGS = {
 }
 
 
+# settings.json keys of the hidden Graphics screen: their defaults apply in the automatic setup.
+AUTO_SETTING_DEFAULTS = ('vsync', 'vram_budget_mb', 'vram_auto', 'eager_readback', 'write_merge',
+                         'deferred_readback', 'gpu_readbacks', 'precompile_shaders')
+
+
 def config_path():
     base = Path(os.environ.get('APPDATA') or os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
     return base / 'infamous-launcher' / 'settings.json'
@@ -323,24 +386,24 @@ APP_VER_107 = '01.07'
 _COPY_UPDATE = ('Copy every file of update 1.07 (CUSA00223-patch: eboot.bin, sce_module/, sce_sys/ and the rest) '
                 'over the base game folder, replacing the files; see "Required game files" in the README.',
                 'Copie todos os arquivos do update 1.07 (CUSA00223-patch: eboot.bin, sce_module/, sce_sys/ e o resto) '
-                'por cima da pasta do jogo base, substituindo os arquivos; veja "Arquivos do jogo necessários" no README.')
+                'por cima da pasta do jogo base, substituindo os arquivos; veja "Arquivos do jogo necessÃ¡rios" no README.')
 TEXT = {
     'old_module': ('{detail} is not the one from update 1.07 (it comes from the base game 1.00 or another '
                    'version) and the game cannot start with it. ' + _COPY_UPDATE[0],
-                   'O {detail} não é o do update 1.07 (é do jogo base 1.00 ou de outra versão) e o jogo não '
+                   'O {detail} nÃ£o Ã© o do update 1.07 (Ã© do jogo base 1.00 ou de outra versÃ£o) e o jogo nÃ£o '
                    'abre com ele. ' + _COPY_UPDATE[1]),
     'other_eboot': ('eboot.bin is not the one from update 1.07 ({detail}); the port is only tested with '
                     'CUSA00223 (US) 1.07. ' + _COPY_UPDATE[0],
-                    'O eboot.bin não é o do update 1.07 ({detail}); o port só é testado com o CUSA00223 (EUA) '
+                    'O eboot.bin nÃ£o Ã© o do update 1.07 ({detail}); o port sÃ³ Ã© testado com o CUSA00223 (EUA) '
                     '1.07. ' + _COPY_UPDATE[1]),
     'old_param': ('{detail} is not the one from update 1.07: the game starts, but cheats (mods) made for 1.07 '
                   'are not listed. Copy the 1.07 param.sfo (on the PS4: /system_data/priv/appmeta/CUSA00223/param.sfo) '
                   'into the game folder\'s sce_sys/; see "Required game files" in the README.',
-                  'O {detail} não é o do update 1.07: o jogo abre, mas os cheats (mods) feitos para o 1.07 não '
+                  'O {detail} nÃ£o Ã© o do update 1.07: o jogo abre, mas os cheats (mods) feitos para o 1.07 nÃ£o '
                   'aparecem. Copie o param.sfo do 1.07 (no PS4: /system_data/priv/appmeta/CUSA00223/param.sfo) '
-                  'para o sce_sys/ da pasta do jogo; veja "Arquivos do jogo necessários" no README.'),
+                  'para o sce_sys/ da pasta do jogo; veja "Arquivos do jogo necessÃ¡rios" no README.'),
     'unreadable': ('{detail} could not be read (damaged, incomplete or still encrypted): dump it again from the PS4.',
-                   'Não deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faça o dump de novo no PS4.'),
+                   'NÃ£o deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faÃ§a o dump de novo no PS4.'),
 }
 # Problems that are reported but do not block Play.
 WARNINGS = {'other_eboot', 'old_param'}
@@ -711,9 +774,78 @@ def read_ini(path):
     return values
 
 
+# Menu tabs the player still sees without the advanced mode (the in-game menu hides the others).
+PLAYER_TABS = ('Overlay', 'Controls')
+_HARDWARE = None
+
+
+def detected_hardware():
+    """hardware.detect(), once per launcher process (the registry/sysfs reads are fast)."""
+    global _HARDWARE
+    if _HARDWARE is None:
+        _HARDWARE = hardware.detect()
+    return _HARDWARE
+
+
+def auto_config(settings):
+    """hardware.decide() for this machine; None in the advanced mode (the player's choices apply)."""
+    return None if hardware.advanced_mode(settings) else hardware.decide(detected_hardware())
+
+
 def experimental_states(settings):
-    """The player's choices of the launcher's "Experimental fixes" window (tlg.ini + settings)."""
-    return backports_table.read_states(read_ini(user_dir() / 'tlg.ini'), settings)
+    """The switches the game gets. Normally automatic (hardware.py): every graphics switch at its
+    default, renderer v2, native passes as the hardware calls for; only the Overlay and Controls
+    menu keys keep the player's values. In the advanced mode: the player's choices of the launcher's
+    "Experimental fixes" window (tlg.ini + settings), as before."""
+    stored = backports_table.read_states(read_ini(user_dir() / 'tlg.ini'), settings)
+    auto = auto_config(settings)
+    if auto is None:
+        states = stored
+        # This port's renderer on AMD's Windows driver crashed in amdvlk64 (+0xebbbb, +0x2063335)
+        # unless image barriers were merged (the RX 580 preset): applied unless the player chose.
+        if (os.name == 'nt' and detected_hardware()['vendor'] == 'AMD'
+                and backports_table.effective(_item('renderer'), states) == '1'):
+            for key, value in (('TLG_BARRIER_MERGE', '1'), ('TLG_EXPLICIT_RANGE', '1'), ('TLG_BARRIER_SPLIT', '0')):
+                if states.get(key) is None:
+                    states[key] = backports_table.normalize(_item_id(key), value)
+        return states
+    states = {item.id: (stored.get(item.id) if item.group == 'menu' and item.tab in PLAYER_TABS else None)
+              for item in backports_table.ITEMS}
+    states[_item('renderer').id] = backports_table.normalize(_item('renderer'), '2')
+    states[_item('native_passes').id] = backports_table.normalize(_item('native_passes'),
+                                                                  '1' if auto['native_passes'] else '0')
+    return states
+
+
+def _item(key):
+    return next(i for i in backports_table.ITEMS if i.key == key)
+
+
+def _item_id(item_id):
+    return next(i for i in backports_table.ITEMS if i.id == item_id)
+
+
+def reset_to_auto(settings):
+    """Once, when the automatic setup first applies: tlg.ini is copied aside (tlg.ini.before-auto)
+    and its graphics keys are removed (the Overlay and Controls menu keys, the window mode and the
+    mouse stay), so the game reads its defaults and the advanced mode starts clean too."""
+    if hardware.advanced_mode(settings) or settings.get('auto_config_reset'):
+        return False
+    ini = user_dir() / 'tlg.ini'
+    try:
+        text = ini.read_text(encoding='utf-8')
+    except OSError:
+        text = None
+    if text is not None:
+        backup = ini.with_name('tlg.ini.before-auto')
+        if not backup.exists():
+            backup.write_text(text, encoding='utf-8')
+        graphics = {item.key: None for item in backports_table.ITEMS
+                    if item.store == 'ini' and not (item.group == 'menu' and item.tab in PLAYER_TABS)}
+        backports_table.write_ini(ini, graphics)
+    settings['auto_config_reset'] = True
+    save_settings(settings)
+    return True
 
 
 def save_experimental(settings, states):
@@ -734,6 +866,9 @@ def build_env(settings, extra=None):
         env.setdefault(key, value)  # explicit ISS_* in the environment always win
     # Renderer v2 computes the texture budget itself (what the card leaves after everything else);
     # this port's renderer always takes the number.
+    if auto_config(settings) is not None:
+        # Automatic setup: the graphics settings of settings.json are not offered; their defaults apply.
+        settings = {**settings, **{k: DEFAULT_SETTINGS[k] for k in AUTO_SETTING_DEFAULTS}}
     budget = 'auto' if settings.get('vram_auto', True) and renderer_v2(settings) else str(int(settings['vram_budget_mb']))
     env['ISS_GC_BUDGET_MB'] = os.environ.get('ISS_GC_BUDGET_MB', budget)
     env['ISS_READBACKS'] = os.environ.get('ISS_READBACKS', str(settings.get('gpu_readbacks', '2')))
@@ -747,6 +882,12 @@ def build_env(settings, extra=None):
     if settings.get('ui_language', 'auto') != 'auto':
         env['ISS_UI_LANG'] = settings['ui_language']
     env['ISS_CONFIG'] = str(user_dir() / 'tlg.ini')
+    auto = auto_config(settings)
+    if auto is not None:
+        # The automatic setup in the log's Config block (reports show what was picked and why).
+        env['ISS_AUTO_PROFILE'] = auto['profile']
+    else:
+        env['TLG_ADVANCED'] = '1'   # the in-game menu shows its Image and Performance tabs
     dlc = addons.labels(user_dir() / 'dlc')
     if dlc:
         env.setdefault('ISS_ADDCONT_LABELS', ','.join(dlc))
@@ -780,6 +921,10 @@ def build_env(settings, extra=None):
                 env[key] = value
     if extra:
         env.update(extra)
+    # The Mods checkbox is authoritative, including when an older session script
+    # leaves scale variables in the launcher's inherited environment.
+    env.update(camera_mod_environment())
+    env['ISS_CAMERA_PREVENT_PITCH_SLOWDOWN'] = '1' if camera_pitch_mod_enabled() else '0'
     return env
 
 
@@ -905,11 +1050,17 @@ def launch(settings, seconds=0, extra_env=None):
     logtail.LogTail and wait() for the exit code."""
     data = user_dir()
     data.mkdir(parents=True, exist_ok=True)
-    update_ini(data / 'tlg.ini', {
-        'display_mode': str(settings['display_mode']).lower(),  # the game's keys: windowed|borderless|fullscreen
-        'vsync': int(bool(settings['vsync'])),
-        'show_fps': int(bool(settings['show_fps'])),
-    })
+    if auto_config(settings) is None:
+        update_ini(data / 'tlg.ini', {
+            'display_mode': str(settings['display_mode']).lower(),  # the game's keys: windowed|borderless|fullscreen
+            'vsync': int(bool(settings['vsync'])),
+            'show_fps': int(bool(settings['show_fps'])),
+        })
+    else:
+        # Automatic setup: the window mode and the FPS counter are the in-game menu's (tlg.ini);
+        # the graphics keys go back to the defaults once (a copy of tlg.ini is kept).
+        update_ini(data / 'tlg.ini', {})   # created when missing: the game and the in-game menu use it
+        reset_to_auto(settings)
     log = new_log()
     note = savemanager.backup_before_play(data)   # saves copied aside before every start (and to the extra folder)
     if note:
@@ -941,7 +1092,7 @@ def main(argv=None):
         freed, failures = clear_shader_cache(settings)
         print(f'Cache de shaders: {shader_cache.human_size(freed)} liberados', flush=True)
         for path, error in failures:
-            print(f'Não apagado (em uso? feche o jogo): {path}: {error}', file=sys.stderr)
+            print(f'NÃ£o apagado (em uso? feche o jogo): {path}: {error}', file=sys.stderr)
         return 1 if failures else 0
     problems = check_game(settings['game_dir'])
     for kind, detail in problems:

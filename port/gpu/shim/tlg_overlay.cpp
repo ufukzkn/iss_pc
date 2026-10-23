@@ -149,7 +149,7 @@ void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
         return;
     }
-    ImGui::GetIO().MouseDrawCursor = value;
+    overlay_context->IO.MouseDrawCursor = value;
     if (value) {
         requested_tab = TlgSettings::Get().menu_tab;
     }
@@ -384,14 +384,32 @@ std::string OverlayText() {
 constexpr const char* Unsupported = "Unavailable: game version or code signature mismatch.";
 
 
+// The launcher's hidden advanced mode (TLG_ADVANCED=1, or ISS_ADVANCED=1 set by hand): only then the
+// Image and Performance tabs show. Otherwise the launcher sets the graphics up for the hardware
+// (launcher/hardware.py) and the menu keeps Overlay (with the window mode) and Controls.
+bool AdvancedMenu() {
+    static const bool advanced = [] {
+        for (const char* name : {"TLG_ADVANCED", "ISS_ADVANCED"})
+            if (const char* value = std::getenv(name); value && value[0] == '1') return true;
+        return false;
+    }();
+    return advanced;
+}
+
+void DisplayModeRow() {
+    namespace G = TlgGraphics;
+    auto& s = TlgSettings::Get();
+    static const char* const modes[] = {TL("Windowed", "Janela"), TL("Borderless window", "Janela sem borda"), TL("Fullscreen", "Tela cheia")};
+    ChoiceRow(TL("Display mode", "Modo de exibição"), s.display_mode, G::DisplayModeCount == 3 ? modes : G::DisplayModeNames.data(),
+              nullptr, G::DisplayModeCount, TL("Windowed, borderless window or exclusive fullscreen.", "Janela, janela sem borda ou tela cheia exclusiva."));
+}
+
 void ImageTab() {
     namespace G = TlgGraphics;
     auto& s = TlgSettings::Get();
     ImGui::SeparatorText(TL("Display", "Tela"));
     if (BeginRows("##display")) {
-        static const char* const modes[] = {TL("Windowed", "Janela"), TL("Borderless window", "Janela sem borda"), TL("Fullscreen", "Tela cheia")};
-        ChoiceRow(TL("Display mode", "Modo de exibição"), s.display_mode, G::DisplayModeCount == 3 ? modes : G::DisplayModeNames.data(),
-                  nullptr, G::DisplayModeCount, TL("Windowed, borderless window or exclusive fullscreen.", "Janela, janela sem borda ou tela cheia exclusiva."));
+        DisplayModeRow();
         CheckRow("VSync", s.vsync, TL("Waits for the monitor: no tearing, a little more input delay.", "Espera o monitor: sem tearing, um pouco mais de atraso de entrada."));
         ImGui::EndTable();
     }
@@ -676,6 +694,13 @@ void ControlsTab() {
         }
         ImGui::EndTable();
     }
+    ImGui::SeparatorText(TL("Controller", "Controle"));
+    if (BeginRows("##controller")) {
+        CheckRow(TL("Vibration", "Vibração"), s.rumble,
+                 TL("The controller vibrates with the game. Turn it off if you do not want vibration or if it makes the controller misbehave.",
+                    "O controle vibra com o jogo. Desligue se não quiser vibração ou se ela fizer o controle se comportar mal."));
+        ImGui::EndTable();
+    }
     ImGui::SeparatorText(TL("Sensor mode (graffiti)", "Modo sensor (grafite)"));
     if (BeginRows("##sensor")) {
         SliderRow(TL("Graffiti aiming speed", "Velocidade da mira do grafite"), s.sensor_aim, 25, 200, "%d%%",
@@ -694,6 +719,14 @@ void ControlsTab() {
 void OverlayTab() {
     namespace P = TlgPerfStats;
     auto& s = TlgSettings::Get();
+    if (!AdvancedMenu()) {   // the Image tab (with the window mode) is hidden
+        ImGui::SeparatorText(TL("Display", "Tela"));
+        if (BeginRows("##display_player")) {
+            DisplayModeRow();
+            ImGui::EndTable();
+        }
+        ImGui::SeparatorText(TL("Overlay", "Overlay"));
+    }
     if (BeginRows("##overlay_on")) {
         CheckRow(TL("Show overlay (F10)", "Mostrar overlay (F10)"), s.show_fps, TL("The performance overlay in a corner of the screen.", "O overlay de desempenho num canto da tela."));
         ImGui::EndTable();
@@ -788,14 +821,25 @@ void Menu() {
                              ? -1
                              : 0;
         if (step) {
-            requested_tab = (s.menu_tab + step + TabCount) % TabCount;
+            // Without the advanced mode only Overlay (0) and Controls (3) are shown.
+            int tab = s.menu_tab;
+            do {
+                tab = (tab + step + TabCount) % TabCount;
+            } while (!AdvancedMenu() && tab != 0 && tab != 3);
+            requested_tab = tab;
         }
+    }
+    if (!AdvancedMenu() && s.menu_tab != 0 && s.menu_tab != 3 && requested_tab < 0) {
+        requested_tab = 0;   // a tab saved before the automatic setup, now hidden
     }
     const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() * 2.0f;
     if (ImGui::BeginTabBar("##tabs")) {
         static const char* const tabs[TabCount] = {"Overlay", TL("Image", "Imagem"), TL("Performance", "Desempenho"),
                                                    TL("Controls", "Controle")};
         for (int tab = 0; tab < TabCount; ++tab) {
+            if (!AdvancedMenu() && tab != 0 && tab != 3) {
+                continue;
+            }
             const ImGuiTabItemFlags flags = requested_tab == tab ? ImGuiTabItemFlags_SetSelected : 0;
             if (!ImGui::BeginTabItem(tabs[tab], nullptr, flags)) {
                 continue;
@@ -1068,8 +1112,8 @@ std::string SaveWhen(s64 mtime) {
         std::snprintf(out, sizeof(out), "%02d/%02d/%04d · %02d:%02d", tm.tm_mday, tm.tm_mon + 1,
                       tm.tm_year + 1900, tm.tm_hour, tm.tm_min);
     } else {
-        static const char* months[] = {"Jan", "Mar", "Apr", "May", "Jun",
-                                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        static const char* const months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
         const int hour = tm.tm_hour % 12 ? tm.tm_hour % 12 : 12;
         std::snprintf(out, sizeof(out), "%s %d, %d · %d:%02d %s", months[tm.tm_mon % 12], tm.tm_mday,
                       tm.tm_year + 1900, hour, tm.tm_min, tm.tm_hour < 12 ? "AM" : "PM");
@@ -1464,12 +1508,12 @@ void GuideBox() {
 void OpenGuide() {
     guide_button_rect = ImRect();
     guide_active = true;
-    ImGui::GetIO().MouseDrawCursor = true;
+    overlay_context->IO.MouseDrawCursor = true;
 }
 
 void CloseGuide() {
     guide_active = false;
-    ImGui::GetIO().MouseDrawCursor = menu_open;
+    overlay_context->IO.MouseDrawCursor = menu_open;
     auto& s = TlgSettings::Get();
     if (!s.graffiti_guide_seen.exchange(true)) {
         TlgSettings::Save();
@@ -1795,7 +1839,7 @@ bool HandleGuideEvent(const SDL_Event& event) {
 
 void FinishSaveDialog() {
     RetireChoiceTextures();
-    ImGui::GetIO().MouseDrawCursor = menu_open;
+    overlay_context->IO.MouseDrawCursor = menu_open;
 }
 
 // The save list and messages take the keys, buttons and mouse that answer them; the rest stays

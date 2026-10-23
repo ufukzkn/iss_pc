@@ -470,7 +470,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_on_demand_cache_toggle_persists_and_reaches_the_game(self):
         item_id = 'TLG_LAZY_PROGRAMS'
-        with mock.patch.dict(os.environ, {}, clear=False):
+        with mock.patch.dict(os.environ, {'ISS_ADVANCED': '1'}, clear=False):
             os.environ.pop('ISS_LAZY_PROGRAMS', None)
             os.environ.pop('TLG_LAZY_PROGRAMS', None)
             row = self.graphics.model.get(item_id)
@@ -518,7 +518,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_rx580_toggle_shares_and_persists_the_advanced_setting(self):
         item_id = 'TLG_BARRIER_MERGE'
-        with mock.patch.dict(os.environ, {}, clear=False):
+        with mock.patch.dict(os.environ, {'ISS_ADVANCED': '1'}, clear=False):   # Graphics: advanced mode
             os.environ.pop('ISS_BARRIER_MERGE', None)
             os.environ.pop('TLG_BARRIER_MERGE', None)
             row = self.graphics.model.get(item_id)
@@ -675,6 +675,15 @@ class ControllerTests(unittest.TestCase):
         self.controls.setValue('menu:sensor_aim', '150')
         self.assertIn('sensor_aim=150', self.ini_text())
         self.assertEqual(150, self.controls.pad_model.get('menu:sensor_aim')['value'])
+
+    def test_rumble_switch_is_the_tlg_ini_key_the_menu_shares(self):
+        self.assertTrue(self.controls.pad_model.get('i:rumble')['on'])
+        self.controls.setValue('i:rumble', '0')
+        self.assertIn('rumble=0', self.ini_text())
+        self.assertFalse(self.controls.pad_model.get('i:rumble')['on'])
+        self.controls.setValue('i:rumble', '1')
+        self.assertNotIn('rumble=', self.ini_text())     # the default again
+        self.assertTrue(self.controls.pad_model.get('i:rumble')['on'])
 
     def test_mouse_keys_go_to_tlg_ini_and_defaults_remove_them(self):
         self.controls.setValue('m:mouse_sensitivity', '1.5')
