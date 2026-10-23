@@ -12,8 +12,9 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from . import beta_library, releases, report, updater
 from .logic import tlg_run
@@ -43,6 +44,10 @@ class Updates(QObject):
         self.probes = probes or {}
         self._auto_play_beta = False
         self._betas = beta_library.list_installed(self.library_dir())
+        self._last_beta_attempt = 0
+        self._beta_timer = QTimer(self)
+        self._beta_timer.setInterval(60000)
+        self._beta_timer.timeout.connect(self._check_betas_if_due)
         self._checking = False
         self._error = ''
         self._phase = ''          # '' | download | install | prepare | handoff | ready
@@ -156,7 +161,7 @@ class Updates(QObject):
 
     @Property('QVariantList', notify=changed)
     def releaseOptions(self):
-        return [{'label': self.t('upd_beta' if r.get('beta') else 'upd_stable') + ' · ' + r['tag']}
+        return [{'label': self.t(('upd_official_beta' if r.get('source') == 'upstream' else 'upd_beta') if r.get('beta') else 'upd_stable') + ' · ' + r['tag']}
                 for r in self._releases]
 
     @Property(int, notify=changed)
@@ -294,11 +299,35 @@ class Updates(QObject):
         else:
             tlg_run.save_settings(self.backend.settings)
 
+    @Property(bool, notify=changed)
+    def checkBetasPeriodically(self):
+        return bool(self.backend.settings.get('check_betas_periodically', True))
+
+    @Slot(bool)
+    def setCheckBetasPeriodically(self, value):
+        self.backend.settings['check_betas_periodically'] = bool(value)
+        self._save()
+        if value:
+            self._check_betas_if_due()
+        self.changed.emit()
+
+    def startBetaChecks(self, check_now=True):
+        """Only the real app starts this timer; tests and screenshots never start network work."""
+        self._beta_timer.start()
+        if check_now:
+            self._check_betas_if_due()
+
+    def _check_betas_if_due(self):
+        last = max(float(self.backend.settings.get('beta_last_checked') or 0), self._last_beta_attempt)
+        if self.checkBetasPeriodically and time.time() - last >= 6 * 3600:
+            self.check()
+
     # -- the check -----------------------------------------------------------------------------------
     @Slot()
     def check(self):
         if self._checking or self.busy or self._dialog:
             return
+        self._last_beta_attempt = time.time()
         self._checking, self._error = True, ''
         self.changed.emit()
         version = self.installed()
@@ -332,6 +361,7 @@ class Updates(QObject):
             self._selected = next((i for i, r in enumerate(self._releases)
                                    if channel == 'beta' and r.get('beta')), 0)
             self.release = self._releases[self._selected] if self._releases else None
+            self.backend.settings['beta_last_checked'] = time.time()
             self.backend.settings['update_catalog'] = self._releases
             self.backend.settings['update_seen'] = next((r for r in self._releases if not r.get('beta')), None)
             self._save()
@@ -346,7 +376,8 @@ class Updates(QObject):
     @Slot()
     def download(self):
         url = (self.release or {}).get('url') or releases.RELEASES_URL
-        if not url.startswith(releases.RELEASE_PREFIX):
+        prefix = releases.UPSTREAM_PREFIX if self.betaSelected and (self.release or {}).get('source') == 'upstream' else releases.RELEASE_PREFIX
+        if not url.startswith(prefix):
             url = releases.RELEASES_URL
         if 'open_url' in self.probes:
             self.probes['open_url'](url)

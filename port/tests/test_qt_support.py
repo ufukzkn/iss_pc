@@ -616,6 +616,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.opened[-1], self.release['url'])
 
     def test_check_on_open_setting_is_saved_and_start_probes_honours_it(self):
+        self.backend.settings['check_betas_periodically'] = False
         self.updates.setCheckOnOpen(True)
         self.assertTrue(self.backend.settings['check_updates_on_open'])
         self.assertTrue(self.saved[-1]['check_updates_on_open'])

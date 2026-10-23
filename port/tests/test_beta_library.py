@@ -107,11 +107,30 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(UpdateError):
             library.remove(self.betas, self.tag, self.stable, self.user)
 
+    def test_official_manifest_date_version_is_accepted_for_matching_beta_commit(self):
+        package = self.package('v2026.10.24-abcdef1')
+        release = dict(self.release, source='upstream')
+        target = library.install(package, self.betas, release, 'launcher.exe')
+        data = library.record(self.betas, self.tag)
+        self.assertEqual(data['package_version'], 'v2026.10.24-abcdef1')
+        calls = []
+        library.launch(self.betas, self.tag, self.user, target/'session.log',
+            popen=lambda *a, **k: (calls.append((a,k)) or mock.Mock(pid=99999999)))
+        self.assertNotIn('ISS_BETA_SESSION_LOG', calls[0][1]['env'])
+        self.assertNotEqual(calls[0][1]['stdout'], __import__('subprocess').DEVNULL)
+
+    def test_active_wrapper_pid_blocks_delete_even_during_preparation(self):
+        first = self.install()
+        (self.betas / ('.'+self.tag+'.running.json')).write_text(json.dumps({'pid': __import__('os').getpid()}))
+        with self.assertRaises(update_install.InstallError):
+            library.remove(self.betas, self.tag, self.stable, self.user)
+        self.assertTrue(first.exists())
+
     def test_launch_runs_beta_role_with_shared_data_and_clean_frozen_environment(self):
         first = self.install()
         calls = []
         library.launch(self.betas, self.tag, self.user, first/'session.log',
-                       env={'_MEIPASS2': 'old'}, popen=lambda *a, **k: calls.append((a,k)))
+                       env={'_MEIPASS2': 'old'}, popen=lambda *a, **k: (calls.append((a,k)) or mock.Mock(pid=99999999)))
         args, kw = calls[0]
         self.assertEqual(args[0], [str(first/'launcher.exe'), '--play'])
         self.assertEqual(kw['cwd'], str(first))

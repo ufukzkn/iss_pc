@@ -137,8 +137,11 @@ Game files, saves, cache and player settings are shared, without copying the gam
 A running game blocks deletion and updates. Preparing a beta shows progress in the stable launcher's play log;
 once the beta starts, normal game logging and the close-on-play option apply.
 
-Both channels install packages built by this fork so the retained controller features remain.
-Stable tracks upstream stable releases; beta tracks upstream prereleases on a separate `beta`
-integration branch and never advances `main` or GitHub's Latest stable release. Each channel is
-checked every six hours. To check manually, run **DLC Windows release** in Actions and choose
-`stable` or `beta` under `channel`. Source conflicts stop publication for review.
+Stable updates use this fork's packages. Betas are downloaded directly from **HayatoG/iss_pc**,
+with their original assets and SHA-256 checks. They do not require this fork's GitHub Actions
+or a new fork release. An official beta may not include unmerged fork controller features.
+
+The launcher checks published upstream betas every six hours while open, and catches up at
+its next opening. The Updates toggle controls this check; downloads remain manual.
+CI only follows upstream **stable** releases. No fork beta build, beta release publication,
+or beta publishing schedule is used.

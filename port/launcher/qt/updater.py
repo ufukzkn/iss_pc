@@ -24,7 +24,9 @@ import urllib.error
 import urllib.request
 import zipfile
 
-from .releases import RELEASE_PREFIX, TIMEOUT, UpdateError, user_agent
+from update_install import _replace as replace_with_retry
+
+from .releases import RELEASE_PREFIX, UPSTREAM_PREFIX, TIMEOUT, UpdateError, user_agent
 
 # packaging/{linux,windows}/package.sh: dist/$PORT_SLUG-<platform>-x86_64.<ext>, one top folder
 # with the same name inside.
@@ -52,14 +54,17 @@ def pick_assets(release, nt=None):
     this platform. Raises UpdateError('noasset') when the release has no package for it."""
     assets = {a.get('name'): a for a in (release or {}).get('assets') or [] if isinstance(a, dict)}
     package = assets.get(ASSET_NAMES[platform_key(nt)])
-    if not package or not _trusted(package.get('url')) or not package.get('size'):
+    prefix = (UPSTREAM_PREFIX if (release or {}).get('beta') and (release or {}).get('source') == 'upstream'
+              else RELEASE_PREFIX) + 'download/'
+    trusted = lambda asset: isinstance(asset.get('url'), str) and asset['url'].startswith(prefix)
+    if not package or not trusted(package) or not package.get('size'):
         raise UpdateError('noasset', ASSET_NAMES[platform_key(nt)])
     sums = assets.get(SUMS_NAME)
-    return package, (sums if sums and _trusted(sums.get('url')) else None)
+    return package, (sums if sums and trusted(sums) else None)
 
 
 def _trusted(url):
-    return isinstance(url, str) and url.startswith(DOWNLOAD_PREFIX)
+    return isinstance(url, str) and url.startswith((DOWNLOAD_PREFIX, UPSTREAM_PREFIX + 'download/'))
 
 
 # --------------------------------------------------------------------------------------- network
@@ -293,7 +298,7 @@ def extract(archive_path, target, top, progress=None):
                 else:
                     archive.extractall(tmp)  # noqa: S202 (every member checked by _check_tar)
         source = tmp / top if (tmp / top).is_dir() else tmp
-        os.replace(source, target)
+        replace_with_retry(source, target)
     except UpdateError:
         raise
     except (OSError, tarfile.TarError, zipfile.BadZipFile) as error:

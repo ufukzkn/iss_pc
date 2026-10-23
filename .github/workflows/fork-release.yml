@@ -5,14 +5,8 @@ on:
     branches: [main]
   schedule:
     - cron: '23 */6 * * *'
-    - cron: '53 */6 * * *'
   workflow_dispatch:
     inputs:
-      channel:
-        description: Release channel to build
-        type: choice
-        options: [stable, beta]
-        default: stable
       force:
         description: Rebuild even if this source commit is already released
         type: boolean
@@ -42,7 +36,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force || false }}
-          CHANNEL: ${{ inputs.channel || (github.event.schedule == '53 */6 * * *' && 'beta' || 'stable') }}
         run: python3 .github/scripts/prepare_fork.py
       - name: Check essential fork features
         if: steps.candidate.outputs.needed == 'true'
@@ -195,8 +188,7 @@ jobs:
           git fetch origin main
           if ($LASTEXITCODE) { throw 'Cannot verify remote main' }
           if ((git rev-parse origin/main) -ne $info.base_commit) { throw 'Main changed during the build; retry against the new source' }
-          $target = if ($info.channel -eq 'beta') { 'beta' } else { 'main' }
-          git push origin "HEAD:$target"
+          git push origin HEAD:main
           if ($LASTEXITCODE) { throw 'Cannot publish tested source' }
           $notes = @"
           Windows build of HayatoG/iss_pc with BeastBoyyy's DLC unlocker support (upstream PR #249), optional gyro aiming (#279) and DLC setup metadata import (#321).
@@ -213,11 +205,6 @@ jobs:
           No game files, DLC packages, firmware, player saves or personal settings are included.
           Uses upstream's Updates > Download and install implementation, with this fork's release feed to retain unmerged DLC/gyro support. Preserves the two-confirmed-backup preference and Latest release link. No separate updater feature PR. Update-inFAMOUS.cmd is retained for one-time migration/recovery from the old installer. A merge or test failure does not replace the previous published release.
           "@
-          if ($info.channel -eq 'beta') {
-            # The beta is built with the same retained fork features. Its stable baseline is
-            # pinned for the launcher's comparison card, even after the next stable release.
-            $notes = "BETA test build. May regress or crash.`n`nStable baseline: $($info.stable_tag)`n`nUpstream release: $($info.upstream_tag)`nUpstream commit: $($info.upstream_commit)`nSource commit: $($info.commit)`n`n$($info.upstream_notes)"
-          }
           $notes | Set-Content release-notes.md -Encoding utf8
           $existing = gh release view $info.version --json isDraft 2>$null
           $exists = $LASTEXITCODE -eq 0
@@ -230,9 +217,5 @@ jobs:
           if ($LASTEXITCODE) { throw 'Draft upload failed' }
           $release = gh release view $info.version --json assets | ConvertFrom-Json
           if ($LASTEXITCODE -or $release.assets.Count -ne 5) { throw 'Incomplete draft release; not publishing' }
-          if ($info.channel -eq 'beta') {
-            gh release edit $info.version --draft=false --prerelease --latest=false
-          } else {
-            gh release edit $info.version --draft=false --latest
-          }
+          gh release edit $info.version --draft=false --latest
           if ($LASTEXITCODE) { throw 'Publishing failed; draft remains unpublished' }

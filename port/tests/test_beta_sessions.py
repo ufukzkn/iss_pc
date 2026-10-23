@@ -39,6 +39,27 @@ class SessionTests(unittest.TestCase):
             fake.finished.emit.assert_called_once_with(0)
             self.assertIsNone(fake.process)
 
+    def test_official_upstream_log_marker_is_recognized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tag = 'beta-2026.10.23-abcdef1'
+            (root/tag).mkdir()
+            process = mock.Mock()
+            process.poll.side_effect = [None, 0]
+            process.wait.return_value = 0
+            fake = SimpleNamespace(updates=SimpleNamespace(library_dir=lambda: root,
+                         data_dir=lambda: root/'shared', probes={'running': lambda: False}),
+                         process=None, _play_state='launching', lineReceived=mock.Mock(),
+                         stateChanged=mock.Mock(), gameStarted=mock.Mock(), finished=mock.Mock())
+            def launch(*args):
+                Path(args[3]).write_text('Preparing shaders\nRodando (log: native.log)\n', encoding='utf-8')
+                return process
+            with mock.patch('qt.backend.beta_library.launch', side_effect=launch), \
+                 mock.patch('qt.backend.time.sleep'):
+                Backend._run_beta(fake, tag)
+            fake.gameStarted.emit.assert_called_once_with('native.log')
+            fake.finished.emit.assert_called_once_with(0)
+
     def test_windowless_play_role_supplies_streams_and_reports_native_log(self):
         spec = importlib.util.spec_from_file_location('beta_role_test', LAUNCHER/'infamous_launcher_qt.py')
         module = importlib.util.module_from_spec(spec)

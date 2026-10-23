@@ -226,10 +226,11 @@ class Backend(QObject):
 
     def start_probes(self):
         """GPU/Vulkan detection and the search for saves run off the UI thread."""
+        self.updates.startBetaChecks(check_now=not self.settings.get('check_updates_on_open', False))
         self.saves.scan()
         self.saves.start_timer()
         self.support.collect()
-        if self.settings.get('check_updates_on_open'):   # off by default: the only network call at start
+        if self.settings.get('check_updates_on_open'):   # optional check on every opening, independent of the six-hour beta schedule
             self.updates.check()
         def work():
             self.gpuFound.emit(self.probe('gpu', logic.detect_gpu))
@@ -489,10 +490,12 @@ class Backend(QObject):
             tail = logtail.LogTail(session, LOG_LINES)
             while self.process.poll() is None:
                 for line in tail.poll():
-                    if line.startswith('__ISS_GAME_LOG__='):
+                    native_log = (line.split('=', 1)[1] if line.startswith('__ISS_GAME_LOG__=') else
+                                  line[len('Rodando (log: '):-1] if line.startswith('Rodando (log: ') and line.endswith(')') else None)
+                    if native_log is not None:
                         self._play_state = 'running'
                         self.stateChanged.emit()
-                        self.gameStarted.emit(line.split('=', 1)[1])
+                        self.gameStarted.emit(native_log)
                     elif self._play_state == 'launching':
                         self.lineReceived.emit(line)
                 time.sleep(0.2)

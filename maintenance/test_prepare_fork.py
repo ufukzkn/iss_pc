@@ -50,43 +50,12 @@ class MergeTests(unittest.TestCase):
                 os.chdir(original)
 
 class ChannelTests(unittest.TestCase):
-    def test_missing_upstream_beta_does_not_substitute_stable(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp) / 'outputs'
-            with patch.dict(os.environ, {'GITHUB_REPOSITORY': prepare.REPO, 'CHANNEL': 'beta',
-                                          'GITHUB_OUTPUT': str(output)}), \
-                 patch.object(prepare, 'api', side_effect=[{'tag_name': 'v1.0'}, []]), \
-                 patch.object(prepare, 'git') as git:
+    def test_beta_cannot_be_built_or_published_by_fork_ci(self):
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': prepare.REPO, 'CHANNEL': 'beta'}), \
+             patch.object(prepare, 'api') as api:
+            with self.assertRaisesRegex(AssertionError, 'Beta publication is disabled'):
                 prepare.main()
-            git.assert_not_called()
-            self.assertEqual(output.read_text(), 'needed=false\n')
-
-    def test_beta_reuses_its_branch_and_records_exact_stable_baseline(self):
-        stable = {'tag_name': 'v1.0'}
-        beta = {'tag_name': 'beta-2026.10.23-abcdef1', 'draft': False, 'prerelease': True,
-                'body': "BETA header.\n\n## What's new\n- Test change"}
-        responses = [stable, [beta], {'name': 'beta'}, []]
-        with tempfile.TemporaryDirectory() as tmp:
-            def git(*args):
-                if args == ('rev-parse', 'HEAD'):
-                    return 'forkbase'
-                if args[0] == 'rev-parse':
-                    return 'abcdef1'
-                return ''
-            with patch.dict(os.environ, {'GITHUB_REPOSITORY': prepare.REPO, 'CHANNEL': 'beta',
-                         'GITHUB_OUTPUT': str(Path(tmp) / 'outputs'), 'RUNNER_TEMP': tmp}), \
-                 patch.object(prepare, 'api', side_effect=responses), \
-                 patch.object(prepare, 'git', side_effect=git) as git_call, \
-                 patch.object(prepare, 'merge_release') as merge:
-                prepare.main()
-            info = json.loads((Path(tmp) / 'fork-candidate/candidate.json').read_text())
-            self.assertEqual(info['channel'], 'beta')
-            self.assertTrue(info['version'].startswith('beta-'))
-            self.assertEqual(info['stable_tag'], 'v1.0')
-            self.assertTrue(info['upstream_notes'].startswith("## What's new"))
-            self.assertIn(unittest.mock.call('fetch', '--no-tags', 'origin', 'beta'), git_call.call_args_list)
-            self.assertEqual(merge.call_args_list, [unittest.mock.call('forkbase', 'forkbase'),
-                              unittest.mock.call('forkbase', 'refs/tags/' + beta['tag_name'])])
+        api.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -138,6 +138,22 @@ Item {
                 }
             }
 
+            Rectangle {
+                width: parent.width; height: betaCheckRow.implicitHeight + 36
+                radius: 12; color: Theme.card; border.width: 1; border.color: Theme.cardLine
+                Row {
+                    id: betaCheckRow; x: 20; y: 18; width: parent.width - 40; spacing: 16
+                    Toggle { id: betaCheck; accent: page.accent; checked: Updates.checkBetasPeriodically
+                             onToggled: (v) => Updates.setCheckBetasPeriodically(v); anchors.verticalCenter: parent.verticalCenter }
+                    Column {
+                        width: parent.width - betaCheck.width - 16; spacing: 3
+                        Text { text: Theme.tr("upd_beta_periodic"); color: "#fff"; font.family: Theme.fontText; font.pixelSize: 15; font.weight: Font.DemiBold }
+                        Text { width: parent.width; text: Theme.tr("upd_beta_periodic_note"); wrapMode: Text.WordWrap
+                               color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
+                    }
+                }
+            }
+
             Row {
                 id: notesHeading
                 visible: Updates.notes !== ""

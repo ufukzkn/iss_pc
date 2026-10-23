@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'launcher'))
-from qt import releases
+from qt import releases, updater
 from qt.updates import Updates
 from PySide6.QtCore import QCoreApplication, QObject
 
@@ -15,17 +15,17 @@ from PySide6.QtCore import QCoreApplication, QObject
 class FeedTests(unittest.TestCase):
     def item(self, tag, beta=False, **extra):
         return dict(tag_name=tag, prerelease=beta, draft=False, published_at='2026-10-23T12:00:00Z',
-                    html_url=releases.RELEASE_PREFIX + 'tag/' + tag, **extra)
+                    html_url=releases.UPSTREAM_PREFIX + 'tag/' + tag, **extra)
 
     def fetch(self, listing, baseline_error=False):
         def open_(request, **kwargs):
             url = request.full_url
-            if '/tags/' in url:
-                if baseline_error:
-                    raise OSError('offline')
-                data = self.item('v1.0', body="## What's new\n- Stable change")
-            elif '?per_page=' in url:
-                data = listing
+            if '?per_page=' in url:
+                data = list(listing)
+                if not baseline_error:
+                    stable = self.item('v1.0', body="## What's new\n- Stable change")
+                    stable['published_at'] = '2026-10-22T12:00:00Z'
+                    data.append(stable)
             else:
                 data = self.item('v2026.10.22-abcdef1')
             return io.BytesIO(json.dumps(data).encode())
@@ -43,7 +43,7 @@ class FeedTests(unittest.TestCase):
     def test_foreign_assets_are_never_installable(self):
         result = self.fetch([self.item('beta-2026.10.23-abcdef2', True,
             assets=[dict(name='infamous-windows-x86_64.zip', size=20,
-                         browser_download_url='https://github.com/HayatoG/iss_pc/releases/download/x/a.zip')])])
+                         browser_download_url='https://github.com/other/project/releases/download/x/a.zip')])])
         self.assertEqual(result[1]['assets'], [])
 
     def test_no_beta_keeps_stable_usable(self):
@@ -51,7 +51,24 @@ class FeedTests(unittest.TestCase):
 
     def test_baseline_failure_does_not_hide_beta(self):
         result = self.fetch([self.item('beta-2026.10.23-abcdef2', True, body='Stable baseline: v1.0\n')], True)
-        self.assertEqual(result[1]['baseline'], {'tag': 'v1.0', 'body': ''})
+        self.assertNotIn('baseline', result[1])
+
+    def test_official_assets_are_beta_only_and_not_an_in_place_stable_update(self):
+        link = releases.UPSTREAM_PREFIX + 'download/beta-test/infamous-windows-x86_64.zip'
+        result = self.fetch([self.item('beta-2026.10.23-abcdef2', True,
+            assets=[dict(name='infamous-windows-x86_64.zip', size=20, browser_download_url=link)])])
+        beta = result[1]
+        self.assertEqual(beta['source'], 'upstream')
+        self.assertEqual(updater.pick_assets(beta, nt=True)[0]['url'], link)
+        self.assertTrue(beta['url'].startswith(releases.UPSTREAM_PREFIX))
+        with self.assertRaises(releases.UpdateError):
+            updater.pick_assets(dict(beta, beta=False), nt=True)
+
+    def test_baseline_excludes_stable_published_after_beta(self):
+        future = self.item('v2.0', body='Future stable')
+        future['published_at'] = '2026-10-24T12:00:00Z'
+        result = self.fetch([self.item('beta-2026.10.23-abcdef2', True), future])
+        self.assertEqual(result[1]['baseline']['tag'], 'v1.0')
 
     def test_beta_tags_are_comparable(self):
         self.assertEqual(releases.parse_version('beta-2026.10.23-abcdef2'), ((2026, 10, 23), 'abcdef2'))
@@ -117,6 +134,21 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(self.u.betaSelected)
         restored = Updates(self.backend, self.u.probes)
         self.assertTrue(restored.betaSelected)
+
+    def test_periodic_beta_check_runs_only_when_six_hours_are_due(self):
+        self.u.check = Mock()
+        self.backend.settings['beta_last_checked'] = 100000
+        with patch('qt.updates.time.time', return_value=100000 + 6*3600 - 1):
+            self.u._check_betas_if_due()
+        self.u.check.assert_not_called()
+        with patch('qt.updates.time.time', return_value=100000 + 6*3600):
+            self.u._check_betas_if_due()
+        self.u.check.assert_called_once()
+        self.u.check.reset_mock()
+        self.backend.settings['check_betas_periodically'] = False
+        with patch('qt.updates.time.time', return_value=200000):
+            self.u._check_betas_if_due()
+        self.u.check.assert_not_called()
 
     def test_failed_check_keeps_selection_and_cached_notes(self):
         self.u.selectRelease(1)

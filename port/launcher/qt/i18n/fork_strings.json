@@ -81,12 +81,12 @@
       "pt": "Beta · teste"
     },
     "upd_beta_warning": {
-      "en": "Beta builds may regress or crash. Review their changes below. Betas install separately; your stable build stays available.",
-      "pt": "Betas podem ter regressões ou falhas. Leia as mudanças abaixo. Elas são instaladas separadamente; a versão estável continua disponível."
+      "en": "Official upstream test build: may regress or crash and may not include this fork’s gyro or stick-gain additions. It installs separately; your stable fork stays.",
+      "pt": "Teste oficial do upstream: pode ter regressões e não incluir o gyro ou ganho do analógico deste fork. É instalado separadamente; o fork estável permanece."
     },
     "upd_beta_empty": {
-      "en": "No beta package is published for this fork yet.",
-      "pt": "Nenhum pacote beta foi publicado para este fork ainda."
+      "en": "No official upstream beta is currently published.",
+      "pt": "Nenhuma beta oficial do upstream está publicada no momento."
     },
     "upd_baseline": {
       "en": "Stable baseline · {tag}",
@@ -147,6 +147,18 @@
     "upd_beta_page": {
       "en": "Release page",
       "pt": "Página da release"
+    },
+    "upd_official_beta": {
+      "en": "HayatoG beta · original package",
+      "pt": "Beta HayatoG · pacote original"
+    },
+    "upd_beta_periodic": {
+      "en": "Check official betas every 6 hours",
+      "pt": "Verificar betas oficiais a cada 6 horas"
+    },
+    "upd_beta_periodic_note": {
+      "en": "While the launcher is open; overdue checks run on the next opening. Downloads start only when you choose a build.",
+      "pt": "Enquanto o launcher estiver aberto; verificações pendentes ocorrem na próxima abertura. O download só começa quando você escolhe uma versão."
     }
   },
   "overrides": {

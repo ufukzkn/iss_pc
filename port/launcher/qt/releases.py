@@ -12,6 +12,7 @@ import urllib.request
 API_URL = 'https://api.github.com/repos/ufukzkn/iss_pc/releases/latest'
 RELEASES_URL = 'https://github.com/ufukzkn/iss_pc/releases/latest'
 RELEASE_PREFIX = 'https://github.com/ufukzkn/iss_pc/releases/'
+UPSTREAM_PREFIX = 'https://github.com/HayatoG/iss_pc/releases/'
 TIMEOUT = 10
 
 
@@ -152,7 +153,7 @@ def user_agent(version=''):
     return f'iss_pc-launcher/{version or "unknown"} (+https://github.com/HayatoG/iss_pc)'
 
 
-def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout=TIMEOUT, etag='', *, catalog=False):
+def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout=TIMEOUT, etag='', *, catalog=False, prefix=RELEASE_PREFIX, source='fork'):
     """The one request the launcher makes: GET the latest release. Sends no data of the player,
     only the User-Agent that names the port. Returns {'tag','name','url','body','published','assets',
     'etag'} (assets: [{'name','url','size'}] of the files whose download URL is HTTPS on our own
@@ -190,14 +191,14 @@ def fetch_latest(version='', opener=urllib.request.urlopen, url=API_URL, timeout
         if catalog:
             if not isinstance(data, list):
                 raise ValueError('Expected a release list')
-            return [normalize_release(item) for item in data
+            return [normalize_release(item, prefix=prefix, source=source) for item in data
                     if isinstance(item, dict) and not item.get('draft') and item.get('tag_name')]
-        return normalize_release(data, answer_etag)
+        return normalize_release(data, answer_etag, prefix, source)
     except (ValueError, KeyError, TypeError, UnicodeDecodeError) as error:
         raise UpdateError('bad') from error
 
 
-def normalize_release(data, etag=''):
+def normalize_release(data, etag='', prefix=RELEASE_PREFIX, source='fork'):
     if not isinstance(data, dict):
         raise ValueError('Expected a release object')
     tag = str(data['tag_name'])
@@ -207,47 +208,38 @@ def normalize_release(data, etag=''):
         if not isinstance(asset, dict):
             continue
         link = str(asset.get('browser_download_url') or '')
-        if link.startswith(RELEASE_PREFIX + 'download/') and isinstance(asset.get('size'), int):
+        if link.startswith(prefix + 'download/') and isinstance(asset.get('size'), int):
             assets.append({'name': str(asset.get('name') or ''), 'url': link, 'size': asset['size'],
                            'digest': str(asset.get('digest') or '')})
     return {'tag': tag, 'name': str(data.get('name') or tag), 'body': str(data.get('body') or ''),
-            'url': page if page.startswith(RELEASE_PREFIX) else RELEASES_URL,    # only our own releases page opens
+            'url': page if page.startswith(prefix) else prefix + 'latest',    # only our own releases page opens
             'published': str(data.get('published_at') or '')[:10],
             'timestamp': str(data.get('published_at') or ''), 'assets': assets, 'etag': etag,
-            'beta': bool(data.get('prerelease'))}
+            'beta': bool(data.get('prerelease')), 'source': source}
 
 
 UPSTREAM_API = 'https://api.github.com/repos/HayatoG/iss_pc/releases/'
 
 
 def fetch_catalog(version='', opener=urllib.request.urlopen):
-    """Stable stays first; prereleases are explicit choices, never automatic stable updates.
-
-    Only this fork's packages can be installed. Upstream is consulted for the stable reference
-    notes, not for binaries. Three pages bound the network work on a busy release feed.
-    """
+    """Fork stable packages plus upstream's published betas; no fork beta build is needed."""
     stable = fetch_latest(version, opener=opener)
-    choices = [stable]
+    official = []
     for page in range(1, 4):
         items = fetch_latest(version, opener=opener,
-                             url=API_URL.rsplit('/', 1)[0] + f'?per_page=30&page={page}', catalog=True)
-        choices.extend(item for item in items if item['beta'])
-        if len(items) < 30 or len(choices) >= 11:
+                             url=UPSTREAM_API.rstrip('/') + f'?per_page=30&page={page}', catalog=True,
+                             prefix=UPSTREAM_PREFIX, source='upstream')
+        official.extend(items)
+        if len(items) < 30:
             break
-    choices[1:] = sorted(choices[1:], key=lambda item: (item['timestamp'], item['tag']), reverse=True)[:10]
-    # The beta build records its exact stable baseline, so future stable releases cannot change
-    # the comparison beneath an older beta. A missing reference is explicit, not guessed.
-    baselines = {}
-    for item in choices[1:]:
-        match = re.search(r'^Stable baseline: ([0-9A-Za-z.+_-]+)\s*$', item['body'], re.M)
-        if not match:
-            continue
-        tag = match.group(1)
-        if tag not in baselines:
-            try:
-                baseline = fetch_latest(version, opener=opener, url=UPSTREAM_API + 'tags/' + tag)
-                baselines[tag] = {'tag': tag, 'body': baseline['body'][:40000]}
-            except UpdateError:
-                baselines[tag] = {'tag': tag, 'body': ''}
-        item['baseline'] = baselines[tag]
-    return {'releases': choices}
+    betas = sorted((r for r in official if r['beta'] and r['tag'].startswith('beta-')),
+                   key=lambda r: (r['timestamp'], r['tag']), reverse=True)[:10]
+    stable_versions = [r for r in official if not r['beta']]
+    for beta in betas:
+        # Compare against the last stable published before this beta, rather than a future
+        # stable. Installed copies retain this snapshot with their own offline notes.
+        candidates = [r for r in stable_versions if r['timestamp'] <= beta['timestamp']]
+        if candidates:
+            baseline = max(candidates, key=lambda r: r['timestamp'])
+            beta['baseline'] = {'tag': baseline['tag'], 'body': baseline['body'][:40000]}
+    return {'releases': [stable, *betas]}
