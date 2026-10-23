@@ -122,3 +122,17 @@ or deletes older releases. Upstream source is merged normally; upstream workflow
 changes require deliberate review. The separate upstream PR branches contain no
 fork release feed or publishing automation. Build tests do not prove mission-level
 DLC behavior, aiming feel or performance on every machine.
+
+
+## Stable and beta builds
+
+In **Updates**, click **Check for updates**, then select a build under **Release channel / build**.
+Stable remains the default. Betas are explicitly marked as test builds; their changes appear first,
+with the notes for the exact upstream stable baseline underneath. Select Stable again to return
+through the same verified installer. The installer retains saves, settings and caches as before.
+
+Both channels install packages built by this fork so the retained controller features remain.
+Stable tracks upstream stable releases; beta tracks upstream prereleases on a separate `beta`
+integration branch and never advances `main` or GitHub's Latest stable release. Each channel is
+checked every six hours. To check manually, run **DLC Windows release** in Actions and choose
+`stable` or `beta` under `channel`. Source conflicts stop publication for review.

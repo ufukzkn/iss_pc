@@ -212,7 +212,8 @@ def normalize_release(data, etag=''):
                            'digest': str(asset.get('digest') or '')})
     return {'tag': tag, 'name': str(data.get('name') or tag), 'body': str(data.get('body') or ''),
             'url': page if page.startswith(RELEASE_PREFIX) else RELEASES_URL,    # only our own releases page opens
-            'published': str(data.get('published_at') or '')[:10], 'assets': assets, 'etag': etag,
+            'published': str(data.get('published_at') or '')[:10],
+            'timestamp': str(data.get('published_at') or ''), 'assets': assets, 'etag': etag,
             'beta': bool(data.get('prerelease'))}
 
 
@@ -233,7 +234,7 @@ def fetch_catalog(version='', opener=urllib.request.urlopen):
         choices.extend(item for item in items if item['beta'])
         if len(items) < 30 or len(choices) >= 11:
             break
-    choices[1:] = sorted(choices[1:], key=lambda item: (item['published'], item['tag']), reverse=True)[:10]
+    choices[1:] = sorted(choices[1:], key=lambda item: (item['timestamp'], item['tag']), reverse=True)[:10]
     # The beta build records its exact stable baseline, so future stable releases cannot change
     # the comparison beneath an older beta. A missing reference is explicit, not guessed.
     baselines = {}
