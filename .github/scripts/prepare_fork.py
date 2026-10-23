@@ -72,9 +72,9 @@ def main():
         if previous:
             git('fetch', '--no-tags', 'origin', 'beta')
             git('checkout', '--detach', 'FETCH_HEAD')
-            merge_release(git('rev-parse', 'HEAD'), base)
+            merge_release(base, base)
     git('fetch', '--no-tags', 'upstream', 'tag', tag)
-    merge_release(git('rev-parse', 'HEAD'), f'refs/tags/{tag}')
+    merge_release(base, f'refs/tags/{tag}')
     candidate = git('rev-parse', 'HEAD')
     if channel == 'beta':
         published = next((r for r in api(f'repos/{REPO}/releases?per_page=30')
@@ -88,7 +88,7 @@ def main():
               'upstream_commit': git('rev-parse', f'refs/tags/{tag}^{{commit}}'),
               'base_commit': base, 'commit': candidate, 'version': version, 'needed': needed,
               'channel': channel, 'stable_tag': stable['tag_name'],
-              'upstream_notes': official.get('body', '')}
+              'upstream_notes': official.get('body', '')[official.get('body', '').find("## What's new"):] if "## What's new" in official.get('body', '') else official.get('body', '')}
     folder = Path(os.environ['RUNNER_TEMP']) / 'fork-candidate'
     folder.mkdir()
     (folder / 'candidate.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
