@@ -127,9 +127,15 @@ DLC behavior, aiming feel or performance on every machine.
 ## Stable and beta builds
 
 In **Updates**, click **Check for updates**, then select a build under **Release channel / build**.
-Stable remains the default. Betas are explicitly marked as test builds; their changes appear first,
-with the notes for the exact upstream stable baseline underneath. Select Stable again to return
-through the same verified installer. The installer retains saves, settings and caches as before.
+Stable remains the default. Beta changes appear above the notes for the exact upstream stable baseline.
+
+**Download beta** keeps a verified package in the `infamous-betas` folder beside the stable installation.
+**Download & play beta** downloads it once and starts it; later use **Play beta** without downloading again.
+Multiple betas can coexist. The installed-beta list also offers release notes and **Delete beta**.
+Only that beta's program folder is removed; the stable installation stays available through its normal Play button.
+Game files, saves, cache and player settings are shared, without copying the game into every beta.
+A running game blocks deletion and updates. Preparing a beta shows progress in the stable launcher's play log;
+once the beta starts, normal game logging and the close-on-play option apply.
 
 Both channels install packages built by this fork so the retained controller features remain.
 Stable tracks upstream stable releases; beta tracks upstream prereleases on a separate `beta`

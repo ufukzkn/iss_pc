@@ -81,8 +81,8 @@
       "pt": "Beta · teste"
     },
     "upd_beta_warning": {
-      "en": "Beta builds may regress or crash. Review the changes below before installing. You can select Stable to return.",
-      "pt": "Betas podem ter regressões ou falhas. Leia as mudanças abaixo antes de instalar. Selecione Estável para voltar."
+      "en": "Beta builds may regress or crash. Review their changes below. Betas install separately; your stable build stays available.",
+      "pt": "Betas podem ter regressões ou falhas. Leia as mudanças abaixo. Elas são instaladas separadamente; a versão estável continua disponível."
     },
     "upd_beta_empty": {
       "en": "No beta package is published for this fork yet.",
@@ -95,6 +95,58 @@
     "upd_baseline_missing": {
       "en": "The stable reference notes could not be retrieved. Check again when online.",
       "pt": "Não foi possível obter as notas da base estável. Verifique novamente quando estiver online."
+    },
+    "upd_beta_download": {
+      "en": "Download beta",
+      "pt": "Baixar beta"
+    },
+    "upd_beta_play": {
+      "en": "Play beta",
+      "pt": "Jogar beta"
+    },
+    "upd_beta_download_play": {
+      "en": "Download & play beta",
+      "pt": "Baixar e jogar beta"
+    },
+    "upd_beta_delete": {
+      "en": "Delete beta",
+      "pt": "Excluir beta"
+    },
+    "upd_beta_delete_confirm": {
+      "en": "Delete {tag} from the beta library? The stable installation and shared game files, saves and caches stay.",
+      "pt": "Excluir {tag} da biblioteca de betas? A instalação estável e os arquivos compartilhados do jogo, saves e caches ficam."
+    },
+    "upd_beta_library": {
+      "en": "Installed betas",
+      "pt": "Betas instaladas"
+    },
+    "upd_beta_library_note": {
+      "en": "Keep multiple test builds here. Play any installed beta without downloading again; game files, saves and caches are shared with your stable installation.",
+      "pt": "Mantenha várias versões de teste aqui. Jogue qualquer beta instalada sem baixar novamente; os arquivos do jogo, saves e caches são compartilhados com a instalação estável."
+    },
+    "upd_beta_none_installed": {
+      "en": "No betas installed yet.",
+      "pt": "Nenhuma beta instalada ainda."
+    },
+    "upd_beta_location": {
+      "en": "Beta packages are kept separately in {folder}. Your stable installation stays.",
+      "pt": "Os pacotes beta ficam separados em {folder}. A instalação estável permanece."
+    },
+    "upd_beta_ready": {
+      "en": "{tag} is installed in your beta library. Ready to play.",
+      "pt": "{tag} está instalada na biblioteca de betas. Pronta para jogar."
+    },
+    "upd_beta_starting": {
+      "en": "Preparing beta {tag}…",
+      "pt": "Preparando beta {tag}…"
+    },
+    "upd_beta_intro": {
+      "en": "Download test builds alongside your stable installation, then play, inspect their release notes or delete them here. Each beta is kept until you choose to remove it.",
+      "pt": "Baixe versões de teste ao lado da instalação estável; jogue, veja as notas ou exclua-as aqui. Cada beta fica guardada até você decidir removê-la."
+    },
+    "upd_beta_page": {
+      "en": "Release page",
+      "pt": "Página da release"
     }
   },
   "overrides": {

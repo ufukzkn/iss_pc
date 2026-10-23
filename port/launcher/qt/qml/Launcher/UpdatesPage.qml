@@ -104,12 +104,16 @@ Item {
                     Flow {
                         width: versions.width; spacing: 10
                         GhostButton { tone: "primary"; accent: Theme.warn; text: Theme.tr("upd_check"); enabled: !Updates.checking && !Updates.busy; onClicked: Updates.check() }
-                        GhostButton { visible: Updates.packaged && !Updates.canRestart; accent: Theme.warn; text: Theme.tr("upd_install")
+                        GhostButton { visible: Updates.packaged && !Updates.canRestart && !Updates.selectedBetaInstalled; accent: Theme.warn; text: Theme.tr(Updates.betaSelected ? "upd_beta_download" : "upd_install")
                                       enabled: Updates.canInstall; onClicked: Updates.install() }
+                        GhostButton { visible: Updates.betaSelected; tone: "primary"; accent: Theme.warn
+                                      text: Theme.tr(Updates.selectedBetaInstalled ? "upd_beta_play" : "upd_beta_download_play")
+                                      enabled: Updates.selectedBetaInstalled ? Updates.canManageBetas : Updates.canInstall
+                                      onClicked: Updates.downloadAndPlayBeta() }
                         GhostButton { visible: Updates.canCancel; text: Theme.tr("upd_cancel"); onClicked: Updates.cancelDownload() }
                         GhostButton { visible: Updates.canRollback; text: Theme.tr("upd_rollback"); onClicked: Updates.rollback() }
                         GhostButton { visible: Updates.canRestart; tone: "primary"; accent: Theme.warn; text: Theme.tr("upd_restart"); onClicked: Updates.restart() }
-                        GhostButton { text: Theme.tr("upd_download"); enabled: Updates.canDownload; onClicked: Updates.download() }
+                        GhostButton { text: Theme.tr(Updates.betaSelected ? "upd_beta_page" : "upd_download"); enabled: Updates.canDownload; onClicked: Updates.download() }
                     }
                     Text { visible: Updates.installHint !== ""; width: versions.width; text: Updates.installHint; wrapMode: Text.WordWrap
                            color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
@@ -135,6 +139,7 @@ Item {
             }
 
             Row {
+                id: notesHeading
                 visible: Updates.notes !== ""
                 spacing: 10
                 Rectangle { width: 4; height: 20; color: page.accent; anchors.verticalCenter: parent.verticalCenter }
@@ -162,9 +167,47 @@ Item {
                                selectionColor: page.accent; font.family: Theme.fontText; font.pixelSize: 14 }
                 }
             }
+            Column {
+                width: parent.width; spacing: 10
+                Text { text: Theme.tr("upd_beta_library"); color: "#fff"; font.family: Theme.fontDisplay
+                       font.pixelSize: 24; font.weight: Font.ExtraBold }
+                Text { width: parent.width; text: Theme.tr("upd_beta_library_note"); wrapMode: Text.WordWrap
+                       color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 13 }
+                Text { width: parent.width; text: Updates.betaLibraryPath; elide: Text.ElideMiddle
+                       color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 11 }
+                Text { visible: Updates.installedBetas.length === 0; text: Theme.tr("upd_beta_none_installed")
+                       color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 13 }
+                Repeater {
+                    model: Updates.installedBetas
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: body.width; height: betaRow.implicitHeight + 28
+                        radius: 12; color: Theme.card; border.width: 1; border.color: Theme.cardLine
+                        Column {
+                            id: betaRow; x: 18; y: 14; width: parent.width - 36; spacing: 10
+                            Text { width: parent.width; text: modelData.tag + " · " + modelData.size
+                                   color: Theme.text; font.family: Theme.fontText; font.pixelSize: 14; wrapMode: Text.WrapAnywhere }
+                            Flow {
+                                width: parent.width; spacing: 8
+                                GhostButton { tone: "primary"; accent: Theme.warn; text: Theme.tr("upd_beta_play")
+                                              enabled: Updates.canManageBetas; onClicked: Updates.playBeta(modelData.tag) }
+                                GhostButton { text: Theme.tr("upd_notes"); enabled: !Updates.busy && !Updates.checking
+                                              onClicked: Updates.viewBeta(modelData.tag) }
+                                GhostButton { text: Theme.tr("upd_beta_delete"); enabled: Updates.canManageBetas
+                                              onClicked: Updates.deleteBeta(modelData.tag) }
+                            }
+                        }
+                    }
+                }
+            }
+
             Item { width: 1; height: 30 }
         }
     }
 
+    Connections {
+        target: Updates
+        function onNotesRequested() { flick.contentY = Math.min(notesHeading.y, Math.max(0, flick.contentHeight - flick.height)) }
+    }
     ConfirmCard { anchors.fill: parent; target: Updates }
 }
