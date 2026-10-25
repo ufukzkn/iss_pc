@@ -10,9 +10,9 @@ probe.c apply_patches, already
 applies that format). A patch whose lines fall outside the eboot's segments is skipped on its
 own, never aborting the others or the port's own built-in patches.
 
-Address convention: shadPS4/GoldHEN XML "Address" values assume the eboot mapped at 0x400000,
-not any one port's own Ghidra base - that is the convention the cheat files on the internet
-are already written for, independent of which PS4 game or port reads them.
+Address convention: literal shadPS4/GoldHEN XML addresses assume the eboot mapped at
+0x400000. Mask matches already use ELF virtual addresses (image offsets), so they
+must not have that external address base subtracted again.
 
 Disabled by default: a patch only has any effect once the player (or the file's own
 isEnabled="true") turns it on in mods.json, same as shadPS4/GoldHEN. With nothing enabled this
@@ -135,7 +135,10 @@ def _compile_mask(line, executable_segments):
         relative = int(line.get('Offset', '0'), 0)
     except ValueError:
         relative = int(line.get('Offset', '0'), 10)
-    offset = matches[0] + relative - EBOOT_BASE
+    # Executable PT_LOAD virtual addresses already address the loader's image.
+    # EBOOT_BASE belongs only to literal external cheat addresses; subtracting it
+    # here redirects an otherwise valid signature match into unrelated code.
+    offset = matches[0] + relative
     return offset, encode({**line.attrib, 'Type': 'bytes'})
 
 
