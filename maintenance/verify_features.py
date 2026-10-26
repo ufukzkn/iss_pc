@@ -34,5 +34,5 @@ for name, tokens in checks.items():
 overlay = (root / 'port/gpu/shim/tlg_overlay.cpp').read_text(encoding='utf-8')
 labels = re.search(r'fps_labels\[\]\s*=\s*\{([^}]+)\}', overlay)
 assert labels and re.search(r'"30"\s*,\s*"60"\s*,\s*"120"\s*,\s*"240"', labels[1])
-assert 'static_assert(std::size(fps_labels) == G::FpsLimits.size())' in overlay
+assert re.search(r'static_assert\((?:std::size\(fps_labels\)|sizeof\(fps_labels\)\s*/\s*sizeof\(fps_labels\[0\]\))\s*==\s*G::FpsLimits\.size\(\)', overlay)
 print('DLC preparation/runtime and FPS label safeguards present')
