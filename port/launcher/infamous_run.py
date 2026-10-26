@@ -370,7 +370,7 @@ _COPY_UPDATE = ('Copy every file of update 1.07 (matching CUSA00004/CUSA00223 pa
 TEXT = {
     'old_module': ('{detail} is not the one from update 1.07 (it comes from the base game 1.00 or another '
                    'version) and the game cannot start with it. ' + _COPY_UPDATE[0],
-                   'O {detail} não é o do update 1.07 (é do jogo base 1.00 ou de outra versão) e o jogo não '
+                   'O {detail} nÃ£o Ã© o do update 1.07 (Ã© do jogo base 1.00 ou de outra versÃ£o) e o jogo nÃ£o '
                    'abre com ele. ' + _COPY_UPDATE[1]),
     'other_eboot': ('eboot.bin is not the one from update 1.07 ({detail}); the port is only tested with '
                     'verified CUSA00223/CUSA00004 1.07 executables. ' + _COPY_UPDATE[0],
@@ -383,7 +383,7 @@ TEXT = {
                   'aparecem. Copie o param.sfo do 1.07 do mesmo título (no PS4: /system_data/priv/appmeta/<TITLE_ID>/param.sfo) '
                   'para o sce_sys/ da pasta do jogo; veja "Arquivos do jogo necessários" no README.'),
     'unreadable': ('{detail} could not be read (damaged, incomplete or still encrypted): dump it again from the PS4.',
-                   'Não deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faça o dump de novo no PS4.'),
+                   'NÃ£o deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faÃ§a o dump de novo no PS4.'),
 }
 # Problems that are reported but do not block Play.
 WARNINGS = {'other_eboot', 'old_param'}
@@ -992,7 +992,7 @@ def main(argv=None):
         freed, failures = clear_shader_cache(settings)
         print(f'Cache de shaders: {shader_cache.human_size(freed)} liberados', flush=True)
         for path, error in failures:
-            print(f'Não apagado (em uso? feche o jogo): {path}: {error}', file=sys.stderr)
+            print(f'NÃ£o apagado (em uso? feche o jogo): {path}: {error}', file=sys.stderr)
         return 1 if failures else 0
     problems = check_game(settings['game_dir'])
     for kind, detail in problems:
