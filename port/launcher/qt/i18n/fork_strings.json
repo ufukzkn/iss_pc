@@ -1,5 +1,10 @@
 {
   "strings": {
+    "upd_helper_status_active": {"en": "UPDATE IN PROGRESS", "pt": "ATUALIZAÇÃO EM ANDAMENTO"},
+    "upd_helper_status_done": {"en": "READY TO PLAY", "pt": "PRONTO PARA JOGAR"},
+    "upd_helper_status_error": {"en": "NEEDS ATTENTION", "pt": "REQUER ATENÇÃO"},
+    "upd_helper_current_file": {"en": "CURRENT FILE", "pt": "ARQUIVO ATUAL"},
+    "upd_helper_details": {"en": "DETAILS", "pt": "DETALHES"},
     "upd_phase_inspect": {
       "en": "Checking update recovery and retaining backups…",
       "pt": "Verificando recuperação e retenção de backups…"

@@ -102,17 +102,28 @@ class UpdateProgress(QObject):
     def closeLabel(self):
         return self.t('upd_helper_close')
 
+    @Property(str, notify=changed)
+    def statusLabel(self):
+        return self.t('upd_helper_status_error' if self.failed else
+                      'upd_helper_status_done' if self.settled else 'upd_helper_status_active')
+
+    @Property(str, notify=changed)
+    def detailLabel(self):
+        return self.t('upd_helper_details' if self.failed else 'upd_helper_current_file')
+
 
 def run(transaction, wait_pid, rollback=False):
     app = QGuiApplication.instance() or QGuiApplication([])
     from .app import load_fonts
-    _, text_font = load_fonts()
+    display_font, text_font = load_fonts()
     app.setFont(QFont(text_font, 11))
     model = UpdateProgress(Translator(tlg_run.load_settings()),
         lambda progress: update_install.helper(transaction, wait_pid, rollback=rollback,
                                               progress=progress, show_errors=False))
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty('updateJob', model)
+    engine.rootContext().setContextProperty('updateFontDisplay', display_font)
+    engine.rootContext().setContextProperty('updateFontText', text_font)
     engine.load(QUrl.fromLocalFile(str(Path(__file__).parent / 'qml' / 'UpdateProgress.qml')))
     if not engine.rootObjects():
         raise RuntimeError('Unable to open the update progress window; installation has not started')
