@@ -148,13 +148,17 @@
       "en": "Release page",
       "pt": "Página da release"
     },
+    "upd_fork_beta": {
+      "en": "Fork beta · developer + fork features",
+      "pt": "Beta do fork · developer + recursos do fork"
+    },
     "upd_official_beta": {
       "en": "HayatoG beta · original package",
       "pt": "Beta HayatoG · pacote original"
     },
     "upd_beta_periodic": {
-      "en": "Check official betas every 6 hours",
-      "pt": "Verificar betas oficiais a cada 6 horas"
+      "en": "Check fork and official betas every 6 hours",
+      "pt": "Verificar betas do fork e oficiais a cada 6 horas"
     },
     "upd_beta_periodic_note": {
       "en": "While the launcher is open; overdue checks run on the next opening. Downloads start only when you choose a build.",

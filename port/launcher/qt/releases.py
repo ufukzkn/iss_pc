@@ -51,7 +51,7 @@ def error_text(error, t):
 
 # ------------------------------------------------------------------------------------ versions
 _VERSION_RE = re.compile(r'^v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9a-f]{4,40}))?(\+dirty)?$', re.IGNORECASE)
-_BETA_RE = re.compile(r'^beta-(\d{4})\.(\d{1,2})\.(\d{1,2})-([0-9a-f]{7,40})$', re.I)
+_BETA_RE = re.compile(r'^beta-(?:fork-)?(\d{4})\.(\d{1,2})\.(\d{1,2})-([0-9a-f]{7,40})$', re.I)
 _COMMIT_RE = re.compile(r'^([0-9a-f]{7,40})(\+dirty)?$', re.IGNORECASE)
 
 
@@ -222,8 +222,30 @@ UPSTREAM_API = 'https://api.github.com/repos/HayatoG/iss_pc/releases/'
 
 
 def fetch_catalog(version='', opener=urllib.request.urlopen):
-    """Fork stable packages plus upstream's published betas; no fork beta build is needed."""
+    """Keep fork development builds and original upstream betas separately selectable."""
     stable = fetch_latest(version, opener=opener)
+    fork_items = []
+    try:
+        for page in range(1, 4):
+            items = fetch_latest(version, opener=opener,
+                                 url=API_URL.rsplit('/latest', 1)[0] + f'?per_page=30&page={page}',
+                                 catalog=True)
+            fork_items.extend(items)
+            if len(items) < 30:
+                break
+    except UpdateError:
+        # A missing beta listing must not prevent stable updates or official-beta use.
+        fork_items = []
+    fork_betas = sorted((r for r in fork_items if r['beta'] and r['tag'].startswith('beta-fork-')),
+                        key=lambda r: (r['timestamp'], r['tag']), reverse=True)[:10]
+    fork_stable = [r for r in fork_items if not r['beta']]
+    if stable not in fork_stable:
+        fork_stable.append(stable)
+    for beta in fork_betas:
+        candidates = [r for r in fork_stable if r['timestamp'] <= beta['timestamp']]
+        if candidates:
+            baseline = max(candidates, key=lambda r: r['timestamp'])
+            beta['baseline'] = {'tag': baseline['tag'], 'body': baseline['body'][:40000]}
     official = []
     for page in range(1, 4):
         items = fetch_latest(version, opener=opener,
@@ -242,4 +264,4 @@ def fetch_catalog(version='', opener=urllib.request.urlopen):
         if candidates:
             baseline = max(candidates, key=lambda r: r['timestamp'])
             beta['baseline'] = {'tag': baseline['tag'], 'body': baseline['body'][:40000]}
-    return {'releases': [stable, *betas]}
+    return {'releases': [stable, *fork_betas, *betas]}

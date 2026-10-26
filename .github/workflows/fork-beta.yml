@@ -1,0 +1,229 @@
+name: Maintained developer beta
+
+on:
+  push:
+    branches: [beta]
+  schedule:
+    - cron: '43 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this source commit is already released
+        type: boolean
+        default: false
+
+concurrency:
+  group: maintained-developer-beta
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.repository == 'ufukzkn/iss_pc'
+    runs-on: ubuntu-24.04
+    outputs:
+      needed: ${{ steps.candidate.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare developer plus retained fork features
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: python3 .github/scripts/prepare_beta.py
+      - name: Check essential fork features
+        if: steps.candidate.outputs.needed == 'true'
+        run: python3 maintenance/verify_features.py
+      - uses: actions/upload-artifact@v4
+        if: steps.candidate.outputs.needed == 'true'
+        with:
+          name: candidate-source
+          path: ${{ runner.temp }}/fork-candidate/
+          retention-days: 2
+
+  windows:
+    needs: prepare
+    if: needs.prepare.outputs.needed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: msys2 {0}
+        working-directory: port
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-source
+          path: candidate
+      - name: Check out the exact merged candidate
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $info = Get-Content candidate/candidate.json -Raw | ConvertFrom-Json
+          git fetch candidate/candidate.bundle HEAD
+          if ($LASTEXITCODE) { throw 'Candidate fetch failed' }
+          git checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE) { throw 'Candidate checkout failed' }
+          if ((git rev-parse HEAD) -ne $info.commit) { throw 'Candidate SHA mismatch' }
+          git submodule update --init --recursive
+          if ($LASTEXITCODE) { throw 'Submodule checkout failed' }
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.12'
+      - name: Python profile and source safeguards
+        shell: pwsh
+        working-directory: .
+        run: |
+          # Avoid runneradmin's 8.3 TEMP alias in upstream path-string assertions.
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
+          python -m pip install --disable-pip-version-check PySide6-Essentials
+          if ($LASTEXITCODE) { throw 'Qt test dependencies failed' }
+          python maintenance/verify_features.py
+          if ($LASTEXITCODE) { throw 'Essential feature check failed' }
+          python -m unittest discover -s port/tests -p test_fork_i18n.py -v
+          if ($LASTEXITCODE) { throw 'Fork translation overlay tests failed' }
+          python -m unittest discover -s port/tests -p test_content.py -v
+          if ($LASTEXITCODE) { throw 'DLC profile tests failed' }
+          python -m unittest discover -s port/tests -p test_save_regions.py -v
+          if ($LASTEXITCODE) { throw 'Regional save tests failed' }
+          python maintenance/test_prepare_fork.py
+          if ($LASTEXITCODE) { throw 'Stable routing tests failed' }
+          python maintenance/test_prepare_beta.py
+          if ($LASTEXITCODE) { throw 'Upstream merge routing test failed' }
+          python maintenance/test_renderer_v2_package.py
+          if ($LASTEXITCODE) { throw 'Renderer package safeguards failed' }
+          python -m unittest discover -s port/tests -p test_qt_support.py -v
+          if ($LASTEXITCODE) { throw 'Release/controller tests failed' }
+          foreach ($test in @('test_mask_patch_offsets.py', 'test_iss_compat.py', 'test_camera_mod_selection.py', 'test_import_addcont.py', 'test_updater.py', 'test_qt_updater.py', 'test_qt_update_progress.py', 'test_release_channels.py', 'test_beta_library.py', 'test_beta_sessions.py', 'test_update_install.py', 'test_update_windows.py')) {
+            python -m unittest discover -s port/tests -p $test -v
+            if ($LASTEXITCODE) { throw "Upstream updater/import tests failed: $test" }
+          }
+          python -m unittest discover -s port/tests -p test_qt_screens_a.py -v
+          if ($LASTEXITCODE) { throw 'Controls/settings tests failed' }
+          python -m unittest discover -s port/tests -p test_backports_table.py -v
+          if ($LASTEXITCODE) { throw 'Shader cache option/environment tests failed' }
+          powershell.exe -NoProfile -File maintenance/test_updater.ps1
+          if ($LASTEXITCODE) { throw 'Updater tests failed' }
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            git patch
+            mingw-w64-clang-x86_64-toolchain mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-vulkan-memory-allocator mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-sdl3 mingw-w64-clang-x86_64-fmt mingw-w64-clang-x86_64-boost
+            mingw-w64-clang-x86_64-robin-map mingw-w64-clang-x86_64-xxhash mingw-w64-clang-x86_64-ffmpeg
+            mingw-w64-clang-x86_64-zydis mingw-w64-clang-x86_64-spirv-tools
+            mingw-w64-clang-x86_64-spirv-headers mingw-w64-clang-x86_64-spirv-cross
+            mingw-w64-clang-x86_64-freetype
+      - name: Build the candidate
+        env:
+          MSYS2_ROOT: ${{ runner.temp }}/msys64
+        run: |
+          set -euo pipefail
+          export MSYS2_ROOT=$(cygpath -u "$MSYS2_ROOT")
+          export TLG_BUILD_COMMIT=$(git rev-parse HEAD)
+          TLG_LTO=ON TLG_RENDERER_V2=1 bash build.sh
+          test -s out/tlg-probe.exe
+          test -s out/tlg-probe-v2.exe
+          clang -std=c11 -O2 -Wall -Wextra -Werror -D_GNU_SOURCE -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test.exe
+          out/content-test.exe
+          out/content-test.exe --addons
+          TLG_ADDCONT_LABELS='UNLOCKCOLEJACKET,UNLOCKVESTJOS000,bad,UNLOCKVESTJOS000' out/content-test.exe --environment-addons
+          out/content-test.exe --unknown
+          set +e
+          out/content-test.exe --missing
+          code=$?
+          set -e
+          test "$code" = 21
+          cmake --build out/gpu --target gyro-aim-test gyro-pad-test warmup-inbox-test graphics-settings-test
+          out/gpu/gyro-aim-test.exe
+          out/gpu/gyro-pad-test.exe
+          out/gpu/warmup-inbox-test.exe
+          out/gpu/graphics-settings-test.exe
+      - name: Package
+        env:
+          MSYS2_ROOT: ${{ runner.temp }}/msys64
+          WINPYTHON_WIN: ${{ steps.python.outputs.python-path }}
+        run: |
+          export MSYS2_ROOT=$(cygpath -u "$MSYS2_ROOT")
+          export WINPYTHON=$(cygpath -u "$WINPYTHON_WIN")
+          bash packaging/windows/package.sh
+          "$WINPYTHON" ../maintenance/package_fork.py dist/infamous-windows-x86_64.zip ../candidate/candidate.json
+      - name: Test the packaged launcher
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./maintenance/Update-inFAMOUS.ps1
+          $zip = (Resolve-Path 'port/dist/infamous-windows-x86_64.zip').Path
+          $sha = ((Get-Content ($zip + '.sha256') -Raw).Trim() -split '\s+')[0]
+          $verified = Expand-VerifiedPackage $zip $sha (Join-Path $env:RUNNER_TEMP 'verified-package')
+          Invoke-LauncherSelfTest $verified.Root (Join-Path $env:RUNNER_TEMP 'package-selftest.txt')
+      - name: Publish only after all checks pass
+        shell: pwsh
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $info = Get-Content candidate/candidate.json -Raw | ConvertFrom-Json
+          git fetch origin main
+          if ($LASTEXITCODE) { throw 'Cannot verify remote main' }
+          if ((git rev-parse origin/main) -ne $info.base_commit) { throw 'Main changed during the build; retry against the new source' }
+          git fetch origin beta
+          if ($LASTEXITCODE) { throw 'Cannot verify remote beta' }
+          if ((git rev-parse origin/beta) -ne $info.beta_base_commit) { throw 'Beta changed during build; retry' }
+          git push origin HEAD:beta
+          if ($LASTEXITCODE) { throw 'Cannot publish tested source' }
+          $notes = @"
+          Experimental fork beta: upstream developer with retained gyro, stick gain, regional compatibility, DLC and launcher features.
+
+          Stable baseline: $($info.stable_tag)
+          This package is optional and stays separate from the stable installation. It may regress or crash.
+
+          Upstream release: $($info.upstream_tag)
+          Upstream commit: $($info.upstream_commit)
+          Source commit: $($info.commit)
+          Credits: HayatoG and upstream contributors; BeastBoyyy for the DLC implementation. Original licenses and commit authorship are preserved.
+
+          Cache-loading A/B experiment: Graphics > GPU and shaders > Load shader cache on demand (experimental) is on by default. After first-start compilation, shaders load from the existing cache only when needed. Turn it off and restart to compare upstream's background import, keeping Load pipelines while playing on. No FPS improvement has been confirmed in gameplay yet. Shader compilation, saves and the shader cache format/key are unchanged by this experiment.
+
+          Free-look stick sensitivity: Controls > Controller in the launcher, or Insert > Controls > Controller camera in game. Defaults to 1.00x; try 1.35-1.50x for a more responsive physical right stick while roaming. Applies live and bypasses L2 aiming, gyro, mouse and graffiti. Reaches full stick input sooner; does not increase the game's maximum turn speed.
+
+          No game files, DLC packages, firmware, player saves or personal settings are included.
+          Uses upstream's Updates > Download and install implementation, with this fork's release feed to retain unmerged DLC/gyro support. Preserves the two-confirmed-backup preference and Latest release link. No separate updater feature PR. Update-inFAMOUS.cmd is retained for one-time migration/recovery from the old installer. A merge or test failure does not replace the previous published release.
+          "@
+          $notes | Set-Content release-notes.md -Encoding utf8
+          $existing = gh release view $info.version --json isDraft 2>$null
+          $exists = $LASTEXITCODE -eq 0
+          if ($exists -and -not ($existing | ConvertFrom-Json).isDraft) { Write-Host 'Published release already exists; keeping it.'; exit 0 }
+          if (-not $exists) {
+            gh release create $info.version --draft --prerelease --target $info.commit --title $info.version --notes-file release-notes.md
+            if ($LASTEXITCODE) { throw 'Draft creation failed' }
+          }
+          gh release upload $info.version port/dist/infamous-windows-x86_64.zip port/dist/infamous-windows-x86_64.zip.sha256 port/dist/SHA256SUMS maintenance/Update-inFAMOUS.ps1 maintenance/Update-inFAMOUS.cmd --clobber
+          if ($LASTEXITCODE) { throw 'Draft upload failed' }
+          $release = gh release view $info.version --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -or $release.assets.Count -ne 5) { throw 'Incomplete draft release; not publishing' }
+          gh release edit $info.version --draft=false --prerelease --latest=false
+          if ($LASTEXITCODE) { throw 'Publishing failed; draft remains unpublished' }
