@@ -107,7 +107,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Renderer package safeguards failed' }
           python -m unittest discover -s port/tests -p test_qt_support.py -v
           if ($LASTEXITCODE) { throw 'Release/controller tests failed' }
-          foreach ($test in @('test_iss_compat.py', 'test_camera_mod_selection.py', 'test_import_addcont.py', 'test_updater.py', 'test_qt_updater.py', 'test_qt_update_progress.py', 'test_release_channels.py', 'test_beta_library.py', 'test_beta_sessions.py', 'test_update_install.py', 'test_update_windows.py')) {
+          foreach ($test in @('test_mask_patch_offsets.py', 'test_iss_compat.py', 'test_camera_mod_selection.py', 'test_import_addcont.py', 'test_updater.py', 'test_qt_updater.py', 'test_qt_update_progress.py', 'test_release_channels.py', 'test_beta_library.py', 'test_beta_sessions.py', 'test_update_install.py', 'test_update_windows.py')) {
             python -m unittest discover -s port/tests -p $test -v
             if ($LASTEXITCODE) { throw "Upstream updater/import tests failed: $test" }
           }
