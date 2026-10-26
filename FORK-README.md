@@ -147,11 +147,21 @@ Game files, saves, cache and player settings are shared, without copying the gam
 A running game blocks deletion and updates. Preparing a beta shows progress in the stable launcher's play log;
 once the beta starts, normal game logging and the close-on-play option apply.
 
-Stable updates use this fork's packages. Betas are downloaded directly from **HayatoG/iss_pc**,
-with their original assets and SHA-256 checks. They do not require this fork's GitHub Actions
-or a new fork release. An official beta may not include unmerged fork controller features.
+Stable updates use this fork's packages. The beta selector distinguishes **Fork beta · developer +
+fork features** from **HayatoG beta · original package**. Fork beta packages use `beta-fork-*` tags;
+original upstream beta packages keep their own `beta-*` tags and are not modified. Both can be
+selected, downloaded, retained and removed independently. An original upstream beta may not
+include unmerged fork controller features.
 
-The launcher checks published upstream betas every six hours while open, and catches up at
+The launcher checks published fork and upstream betas every six hours while open, and catches up at
 its next opening. The Updates toggle controls this check; downloads remain manual.
-CI only follows upstream **stable** releases. No fork beta build, beta release publication,
-or beta publishing schedule is used.
+The stable release workflow only follows upstream **stable** releases. A separate beta workflow
+checks upstream **developer** every six hours and on manual dispatch, merging both main's retained
+fork features and developer into the `beta` branch. Source conflicts stop the update for manual
+review. Tests and package checks must pass before beta publication; beta releases never replace
+the default stable release. The branch includes only reviewed resolutions, not an automatic
+"ours" or "theirs" conflict override.
+
+GitHub Actions must be available for scheduled builds to run. While this repository is disabled
+by GitHub, local builds can publish the same beta packages; a scheduled workflow is not evidence
+that automatic synchronization is currently running.

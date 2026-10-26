@@ -17,10 +17,12 @@ class FeedTests(unittest.TestCase):
         return dict(tag_name=tag, prerelease=beta, draft=False, published_at='2026-10-23T12:00:00Z',
                     html_url=releases.UPSTREAM_PREFIX + 'tag/' + tag, **extra)
 
-    def fetch(self, listing, baseline_error=False):
+    def fetch(self, listing, baseline_error=False, fork_listing=()):
         def open_(request, **kwargs):
             url = request.full_url
-            if '?per_page=' in url:
+            if '?per_page=' in url and '/ufukzkn/' in url:
+                data = list(fork_listing)
+            elif '?per_page=' in url:
                 data = list(listing)
                 if not baseline_error:
                     stable = self.item('v1.0', body="## What's new\n- Stable change")
@@ -71,8 +73,18 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(result[1]['baseline']['tag'], 'v1.0')
 
     def test_beta_tags_are_comparable(self):
+        self.assertEqual(releases.parse_version('beta-fork-2026.10.23-abcdef3'), ((2026, 10, 23), 'abcdef3'))
         self.assertEqual(releases.parse_version('beta-2026.10.23-abcdef2'), ((2026, 10, 23), 'abcdef2'))
         self.assertEqual(releases.compare('beta-2026.10.23-abcdef2', 'beta-2026.10.23-abcdef2'), 'same')
+
+    def test_fork_and_original_beta_stay_separate(self):
+        fork = self.item('beta-fork-2026.10.23-abcdef3', True, body='Fork features')
+        fork['html_url'] = releases.RELEASE_PREFIX + 'tag/' + fork['tag_name']
+        result = self.fetch([self.item('beta-2026.10.23-abcdef2', True)], fork_listing=[fork])
+        self.assertEqual([r['source'] for r in result], ['fork', 'fork', 'upstream'])
+        self.assertEqual([r['tag'] for r in result[1:]], [fork['tag_name'], 'beta-2026.10.23-abcdef2'])
+        self.assertEqual(result[1]['baseline']['tag'], result[0]['tag'])
+        self.assertEqual(result[2]['baseline']['tag'], 'v1.0')
 
 
 class Backend(QObject):

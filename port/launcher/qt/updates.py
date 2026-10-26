@@ -161,7 +161,7 @@ class Updates(QObject):
 
     @Property('QVariantList', notify=changed)
     def releaseOptions(self):
-        return [{'label': self.t(('upd_official_beta' if r.get('source') == 'upstream' else 'upd_beta') if r.get('beta') else 'upd_stable') + ' · ' + r['tag']}
+        return [{'label': self.t(('upd_official_beta' if r.get('source') == 'upstream' else 'upd_fork_beta') if r.get('beta') else 'upd_stable') + ' · ' + r['tag']}
                 for r in self._releases]
 
     @Property(int, notify=changed)
