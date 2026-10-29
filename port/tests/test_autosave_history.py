@@ -29,7 +29,8 @@ class AutosaveHistoryTests(unittest.TestCase):
         history = [b for b in sm.list_backups(self.user) if b['name'].startswith('autosave-history/')]
         self.assertEqual(len(history), 1)
         with mock.patch.object(sm, 'prefs', return_value={'keep': 10, 'extra': ''}):
-            sm.restore_backup(self.user, history[0]['name'], running=lambda: False)
+            result = sm.restore_backup(self.user, history[0]['name'], running=lambda: False)
+        self.assertEqual(result['recovered_slot'], '1/CUSA00004/infamousssUser1')
         self.assertEqual((game / 'infamousssAuto1/dis.dat').read_bytes(), b'keep')
         self.assertEqual((game / 'infamousssUser0/dis.dat').read_bytes(), b'keep')
         self.assertEqual((game / 'infamousssUser1/dis.dat').read_bytes(), b'x' * 131072)

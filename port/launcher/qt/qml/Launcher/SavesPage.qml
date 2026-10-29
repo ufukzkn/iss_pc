@@ -157,11 +157,11 @@ Item {
                 Rectangle {
                     width: body.width; height: 56; radius: 10; color: Theme.card; border.width: 1; border.color: Theme.cardLine
                     Column {
-                        x: 18; anchors.verticalCenter: parent.verticalCenter; spacing: 2
-                        Text { text: modelData.when; color: "#fff"; font.family: Theme.fontText; font.pixelSize: 15; font.weight: Font.DemiBold }
+                        x: 18; width: parent.width - restoreBackup.width - 50; anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                        Text { width: parent.width; text: modelData.when; elide: Text.ElideMiddle; color: "#fff"; font.family: Theme.fontText; font.pixelSize: 15; font.weight: Font.DemiBold }
                         Text { text: modelData.info; color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
                     }
-                    GhostButton { compact: true; text: Theme.tr("saves_restore"); enabled: !Saves.running
+                    GhostButton { id: restoreBackup; compact: true; text: Theme.tr("saves_restore"); enabled: !Saves.running
                                   anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter
                                   onClicked: Saves.askRestore(modelData.name) }
                 }
