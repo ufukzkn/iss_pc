@@ -1,5 +1,7 @@
 {
   "strings": {
+    "saves_history_restore_body": {"en": "Recover the autosave from {date} into a new manual save slot? Your existing saves will be kept, and a safety backup is created first.", "pt": "Recuperar o save automático de {date} em um novo slot manual? Seus saves atuais serão mantidos e uma cópia de segurança será criada antes."},
+    "saves_history_recovered": {"en": "Autosave recovered into a new manual save slot. Your existing saves were kept.", "pt": "Save automático recuperado em um novo slot manual. Seus saves atuais foram mantidos."},
     "upd_helper_status_active": {"en": "UPDATE IN PROGRESS", "pt": "ATUALIZAÇÃO EM ANDAMENTO"},
     "upd_helper_status_done": {"en": "READY TO PLAY", "pt": "PRONTO PARA JOGAR"},
     "upd_helper_status_error": {"en": "NEEDS ATTENTION", "pt": "REQUER ATENÇÃO"},

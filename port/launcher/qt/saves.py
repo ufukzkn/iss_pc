@@ -326,7 +326,8 @@ class Saves(QObject):
         if not info:
             return
         self.ask(self.t('saves_restore_title'),
-                 self.t('saves_restore_body', date=self.when(info['time']), count=self.count(info['saves'])),
+                 self.t('saves_history_restore_body' if name.startswith('autosave-history/') else 'saves_restore_body',
+                        date=self.when(info['time']), count=self.count(info['saves'])),
                  [('ok', self.t('saves_restore'), 'primary'), ('cancel', self.t('saves_cancel'), 'ghost')],
                  {'ok': lambda: self._restore(name)})
 
@@ -339,7 +340,9 @@ class Saves(QObject):
         self.backend.refresh()
         self.reload()
         safety = result['path'].name if result['path'] else '—'
-        self.say(self.t('saves_restored', name=safety) + self._backup_note(result), 'good')
+        message = (self.t('saves_history_recovered') if result.get('recovered_slot')
+                   else self.t('saves_restored', name=safety))
+        self.say(message + self._backup_note(result), 'good')
 
     @Slot(int)
     def setKeep(self, n):

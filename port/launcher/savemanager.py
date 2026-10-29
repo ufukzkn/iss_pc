@@ -334,8 +334,8 @@ def _restore_autosave(user_dir, name, running):
             userdata.copy_tree_atomic(stage / 'save', game / name)
         return f'{uid}/{serial}/{name}'
 
-    _, safety = guarded(user_dir, change, running=running)
-    return safety
+    recovered_slot, safety = guarded(user_dir, change, running=running)
+    return dict(safety, recovered_slot=recovered_slot)
 
 
 def guarded(user_dir, change, running=None):
