@@ -298,7 +298,7 @@ def _autosave_history(user_dir):
             if slot not in ('infamousssAuto0', 'infamousssAuto1'):
                 continue
             out.append({'name': f'autosave-history/{uid}/{serial}/{entry}',
-                        'time': folder.stat().st_mtime, 'saves': 1,
+                        'time': files[0].stat().st_mtime, 'saves': 1,
                         'size': userdata.tree_size(folder),
                         'title': display_title(read_param(files[1].read_bytes()))})
         except OSError:

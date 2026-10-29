@@ -28,9 +28,17 @@ int main(int argc,char **argv){
     DIR*d=opendir(history);assert(d);struct dirent*e;int count=0;while((e=readdir(d)))if(iss_history_id(e->d_name))++count;closedir(d);assert(count==5);
     char first[1200],latest[1200];snprintf(first,sizeof(first),"%s/entry-%020d",history,1);assert(stat(first,&st));
     snprintf(latest,sizeof(latest),"%s/entry-%020d/dis.dat",history,7);assert(iss_history_equal(data,latest));
+    bytes(data,131072,3); /* Reopening the other rotating slot must not duplicate an older retained save. */
+    assert(iss_history_capture(history,"infamousssAuto0",host,meta,dirs,remove_dir)==0);
     bytes(data,131072,8);bytes(param,1,1);
     assert(iss_history_capture(history,"infamousssAuto0",host,meta,dirs,remove_dir)==-1);
     assert(!stat(latest,&st));snprintf(first,sizeof(first),"%s/entry-%020d",history,3);assert(!stat(first,&st));
     bytes(data,4,9);assert(iss_history_capture(history,"infamousssAuto0",host,meta,dirs,remove_dir)==-1);
+    bytes(data,131072,9);bytes(param,1328,7);
+    struct utimbuf old={1,1};assert(!utime(data,&old));
+    assert(iss_history_capture(history,"infamousssAuto0",host,meta,dirs,remove_dir)==1);
+    /* A previously unseen but older rotating slot does not evict a newer save. */
+    snprintf(first,sizeof(first),"%s/entry-%020d",history,3);assert(!stat(first,&st));
+    snprintf(first,sizeof(first),"%s/entry-%020d",history,8);assert(stat(first,&st));
     puts("PASS: five immutable autosaves, both rotating slots, dedup, manual exclusion, failed copies do not prune");
 }

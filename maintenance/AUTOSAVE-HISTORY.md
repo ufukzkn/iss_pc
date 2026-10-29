@@ -1,7 +1,7 @@
 # Autosave history
 
 The game keeps its original Auto0 and Auto1 slots. The fork additionally preserves
-the five most recent distinct autosave payloads under
+the five most recent distinct autosave payloads, ordered by their original save time, under
 `<user_dir>/autosave_history/<user>/<CUSA>/entry-...`.
 Both CUSA00004 and CUSA00223 use their own histories. Manual saves are untouched.
 
@@ -11,6 +11,8 @@ updated metadata is unmounted. Each entry contains the unmodified `dis.dat`,
 all required files have been copied, checked, and the staging directory renamed.
 Old entries are pruned only after the new entry is complete. A failed copy logs an
 error but does not block saving or prune older entries.
+Reopening either rotating slot does not duplicate an already retained payload;
+an older slot captured for the first time does not evict a newer save.
 
 In **Saves and data > Backups**, history entries start with `autosave-history/` and
 show the saved chapter/progress. Restoring one creates a new manual save slot;
