@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "autosave_history.h"
 #ifndef _WIN32
 #include <ftw.h>
 #endif
@@ -66,7 +67,7 @@ _Static_assert(sizeof(SearchCond)==64 && sizeof(SearchResult)==56,"dir name sear
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static int initialized;
 static char title_id[16]="UNKNOWN";
-static struct { int used, saved; char host[700], meta[700]; } slots[SLOTS]; /* saved: param written */
+static struct { int used, saved; char host[700], meta[700], history[700], name[32]; } slots[SLOTS]; /* saved: param written */
 static char memory_path[720];
 static uint64_t memory_size;
 static size_t mounts_done, memory_writes;
@@ -182,6 +183,12 @@ static int32_t mount(int32_t user, const char *title, const DirName *dir, uint32
     slots[slot].used=1;
     snprintf(slots[slot].host,sizeof(slots[slot].host),"%s",host);
     snprintf(slots[slot].meta,sizeof(slots[slot].meta),"%s",meta);
+    snprintf(slots[slot].history,sizeof(slots[slot].history),"%s/autosave_history/%d/%s",
+             runtime_file_user_dir(),user,title && *title ? title : title_id);
+    snprintf(slots[slot].name,sizeof(slots[slot].name),"%s",dir->data);
+    /* Preserve the old autosave before a writable mount can replace its bytes. */
+    if(exists && !(mode&MODE_RDONLY) && iss_history_capture(slots[slot].history,dir->data,host,meta,make_dirs,remove_tree)<0)
+        fprintf(stderr,"Autosave history: could not preserve previous %s\n",dir->data);
     memset(result,0,sizeof(*result));
     char point[32];
     snprintf(point,sizeof(point),"/savedata%d",slot&15);
@@ -212,6 +219,8 @@ static ABI int32_t save_umount(const MountPoint *point) {
     pthread_mutex_lock(&lock);
     int slot=slot_of(point);
     int saved=slot>=0 && slots[slot].saved;
+    if(saved && iss_history_capture(slots[slot].history,slots[slot].name,slots[slot].host,slots[slot].meta,make_dirs,remove_tree)<0)
+        fprintf(stderr,"Autosave history: could not archive completed %s\n",slots[slot].name);
     if (slot>=0) { runtime_file_unmount(point->data); slots[slot].used=slots[slot].saved=0; }
     pthread_mutex_unlock(&lock);
     /* A save the game wrote (its param set) is done: "Game saved" in the corner.
