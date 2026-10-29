@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <utime.h>
 
 static inline int iss_history_equal(const char *a,const char *b) {
     FILE *x=fopen(a,"rb"),*y=fopen(b,"rb");
@@ -25,7 +26,11 @@ static inline int iss_history_copy(const char *src,const char *dst,long expected
     while((n=fread(buf,1,sizeof(buf),in))){total+=(long)n;if(fwrite(buf,1,n,out)!=n){ok=0;break;}}
     ok=ok&&!ferror(in)&&(expected<0||total==expected);
     fclose(in);if(fflush(out))ok=0;if(fclose(out))ok=0;
-    return ok&&iss_history_equal(src,dst)?0:-1;
+    if(!ok||!iss_history_equal(src,dst))return -1;
+    struct stat st;struct utimbuf times;
+    if(stat(src,&st))return -1;
+    times.actime=st.st_atime;times.modtime=st.st_mtime;
+    return utime(dst,&times);
 }
 static inline unsigned long long iss_history_id(const char *name) {
     if(strlen(name)!=26||strncmp(name,"entry-",6))return 0;
@@ -39,14 +44,17 @@ static inline int iss_history_capture(const char *root,const char *slot,const ch
     if(strcmp(slot,"infamousssAuto0")&&strcmp(slot,"infamousssAuto1"))return 0;
     if(dirs(root))return -1;
     DIR *d=opendir(root);if(!d)return -1;
-    struct dirent *e;unsigned long long newest=0;int count=0;
-    while((e=readdir(d))){unsigned long long id=iss_history_id(e->d_name);if(id){++count;if(id>newest)newest=id;}}
-    closedir(d);
     char src[1024],dst[1024],pending[1024],final[1024];
     snprintf(src,sizeof(src),"%s/dis.dat",host);
-    struct stat st;if(stat(src,&st)||st.st_size!=131072)return -1;
-    if(newest){snprintf(dst,sizeof(dst),"%s/entry-%020llu/dis.dat",root,newest);
-        if(iss_history_equal(src,dst))return 0;}
+    struct stat st;if(stat(src,&st)||st.st_size!=131072){closedir(d);return -1;}
+    struct dirent *e;unsigned long long newest=0;int count=0,duplicate=0;
+    while((e=readdir(d))){
+        unsigned long long id=iss_history_id(e->d_name);if(!id)continue;
+        ++count;if(id>newest)newest=id;
+        snprintf(dst,sizeof(dst),"%s/%s/dis.dat",root,e->d_name);
+        if(iss_history_equal(src,dst))duplicate=1;
+    }
+    closedir(d);if(duplicate)return 0;
     if(newest==~0ULL)return -1;
     snprintf(pending,sizeof(pending),"%s/.pending-%020llu",root,newest+1);
     snprintf(final,sizeof(final),"%s/entry-%020llu",root,newest+1);
@@ -64,8 +72,15 @@ static inline int iss_history_capture(const char *root,const char *slot,const ch
     if(rename(pending,final))goto failed;
     ++count;
     while(count>5){
-        d=opendir(root);if(!d)return -1;unsigned long long oldest=~0ULL;
-        while((e=readdir(d))){unsigned long long id=iss_history_id(e->d_name);if(id&&id<oldest)oldest=id;}
+        d=opendir(root);if(!d)return -1;unsigned long long oldest=~0ULL;time_t oldest_time=0;
+        while((e=readdir(d))){
+            unsigned long long id=iss_history_id(e->d_name);if(!id)continue;
+            snprintf(dst,sizeof(dst),"%s/%s/dis.dat",root,e->d_name);
+            if(stat(dst,&st)){closedir(d);return -1;}
+            if(oldest==~0ULL||st.st_mtime<oldest_time||(st.st_mtime==oldest_time&&id<oldest)){
+                oldest=id;oldest_time=st.st_mtime;
+            }
+        }
         closedir(d);if(oldest==~0ULL)break;
         snprintf(dst,sizeof(dst),"%s/entry-%020llu",root,oldest);remove_dir(dst);
         if(!stat(dst,&st))return -1;--count;
