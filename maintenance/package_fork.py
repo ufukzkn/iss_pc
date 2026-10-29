@@ -24,7 +24,7 @@ for name in ('Update-inFAMOUS.ps1', 'Update-inFAMOUS.cmd'):
     entries[prefix + name] = (root / 'maintenance' / name).read_bytes()
 entries[prefix + 'FORK-README.md'] = (root / 'FORK-README.md').read_bytes()
 entries[prefix + 'VERSION'] = (info['version'] + '\n').encode()
-manifest = dict(info, schema=1, features=['dlc-unlockers', 'fps-menu-labels', 'gyro-aim', 'upstream-launcher-install', 'shader-cache-on-demand', 'free-look-stick-sensitivity', 'update-progress-window', 'renderer-v2', 'beta-release-selector', 'side-by-side-beta-library', 'official-upstream-betas', 'six-hour-beta-check', 'cusa-build-compatibility', 'camera-improvements'],
+manifest = dict(info, schema=1, features=['dlc-unlockers', 'fps-menu-labels', 'gyro-aim', 'upstream-launcher-install', 'shader-cache-on-demand', 'free-look-stick-sensitivity', 'update-progress-window', 'renderer-v2', 'beta-release-selector', 'side-by-side-beta-library', 'official-upstream-betas', 'six-hour-beta-check', 'cusa-build-compatibility', 'camera-improvements', 'five-autosave-history', 'new-game-confirmation'],
                 dlc_author='BeastBoyyy', dlc_pr='https://github.com/HayatoG/iss_pc/pull/249',
                 files={name[len(prefix):]: hashlib.sha256(data).hexdigest() for name, data in sorted(entries.items())})
 entries[prefix + 'FORK-BUILD.json'] = (json.dumps(manifest, indent=2) + '\n').encode()
