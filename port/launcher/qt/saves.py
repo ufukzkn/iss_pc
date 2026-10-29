@@ -92,7 +92,7 @@ class Saves(QObject):
             'when': self.t('saves_modified', date=self.when(s['time'])), 'size': shader_cache.human_size(s['size']),
             'icon': QUrl.fromLocalFile(s['icon']).toString() if s['icon'] else ''} for s in slots]
         self._backups = [{
-            'name': b['name'], 'when': self.when(b['time']),
+            'name': b['name'], 'when': self.when(b['time']) + (' · ' + b['title'] if b.get('title') else ''),
             'info': self.t('backups_line', count=self.count(b['saves']), size=shader_cache.human_size(b['size']))}
             for b in savemanager.list_backups(data)]
         self.changed.emit()

@@ -36,7 +36,7 @@ KEEP_DEFAULT = save_backup.KEEP
 KEEP_MIN, KEEP_MAX = 3, 100
 ZIP_MAX_FILES = 5000
 ZIP_MAX_BYTES = 1 << 30
-PROBE_NAMES = ('tlg-probe', 'tlg-probe.exe')
+PROBE_NAMES = ('tlg-probe', 'tlg-probe.exe', 'tlg-probe-v2', 'tlg-probe-v2.exe')
 STAMP_RE = re.compile(r'^\d{8}-\d{6}(-\d+)?$')
 UID_RE = re.compile(r'^[A-Za-z0-9_-]{1,32}$')
 SLOT_RE = re.compile(r'^' + SLOT_PREFIX + r'[A-Za-z0-9_]{1,40}$')
@@ -106,7 +106,7 @@ def _process_names():
     if os.name == 'nt':
         try:
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-            out = subprocess.run(['tasklist', '/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq tlg-probe.exe'],
+            out = subprocess.run(['tasklist', '/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq tlg-probe*.exe'],
                                  capture_output=True, text=True, timeout=10, creationflags=flags).stdout
             names = [line.split('","')[0].strip('"') for line in (out or '').splitlines() if line.strip()]
         except (OSError, subprocess.SubprocessError):
@@ -272,7 +272,70 @@ def list_backups(user_dir):
             when = folder.stat().st_mtime
         out.append({'name': name, 'time': when, 'saves': len(userdata.slot_dirs(folder)),
                     'size': userdata.tree_size(folder)})
+    out.extend(_autosave_history(user_dir))
+    return sorted(out, key=lambda b: b['time'], reverse=True)
+
+
+def _autosave_history(user_dir):
+    """Committed native autosave snapshots; staging directories never appear."""
+    root = Path(user_dir) / 'autosave_history'
+    out = []
+    if root.is_symlink():
+        return out
+    for folder in root.glob('*/*/entry-*'):
+        uid, serial, entry = folder.parts[-3:]
+        if not UID_RE.fullmatch(uid) or serial not in SERIALS or not re.fullmatch(r'entry-\d{20}', entry):
+            continue
+        if any(p.is_symlink() for p in (folder, folder.parent, folder.parent.parent)):
+            continue
+        files = [folder / n for n in ('dis.dat', 'param.bin', 'slot.txt')]
+        try:
+            if any(p.is_symlink() or not p.is_file() for p in files):
+                continue
+            if files[0].stat().st_size != 131072 or files[1].stat().st_size != 1328:
+                continue
+            slot = files[2].read_text().strip()
+            if slot not in ('infamousssAuto0', 'infamousssAuto1'):
+                continue
+            out.append({'name': f'autosave-history/{uid}/{serial}/{entry}',
+                        'time': folder.stat().st_mtime, 'saves': 1,
+                        'size': userdata.tree_size(folder),
+                        'title': display_title(read_param(files[1].read_bytes()))})
+        except OSError:
+            continue
     return out
+
+
+def _restore_autosave(user_dir, name, running):
+    """Recover into a NEW manual slot; neither live autosaves nor manual saves are replaced."""
+    if name not in {b['name'] for b in _autosave_history(user_dir)}:
+        raise SaveError('save_backup_missing', name)
+    _, uid, serial, entry = name.split('/')
+    source = Path(user_dir) / 'autosave_history' / uid / serial / entry
+    game = Path(user_dir) / 'savedata' / uid / serial
+
+    def change():
+        game.mkdir(parents=True, exist_ok=True)
+        n = 0
+        while (game / f'infamousssUser{n}').exists() or (game / f'infamousssUser{n}.sce_sys').exists():
+            n += 1
+        name = f'infamousssUser{n}'
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix='autosave-restore-', dir=Path(user_dir)) as temp:
+            stage = Path(temp)
+            (stage / 'save').mkdir()
+            (stage / 'meta').mkdir()
+            shutil.copy2(source / 'dis.dat', stage / 'save' / 'dis.dat')
+            for file in ('param.bin', 'icon0.png'):
+                p = source / file
+                if p.is_file() and not p.is_symlink():
+                    shutil.copy2(p, stage / 'meta' / file)
+            userdata.copy_tree_atomic(stage / 'meta', game / (name + '.sce_sys'))
+            userdata.copy_tree_atomic(stage / 'save', game / name)
+        return f'{uid}/{serial}/{name}'
+
+    _, safety = guarded(user_dir, change, running=running)
+    return safety
 
 
 def guarded(user_dir, change, running=None):
@@ -287,6 +350,8 @@ def guarded(user_dir, change, running=None):
 def restore_backup(user_dir, name, running=None, now=None):
     """Replaces the saves with backup `name`; the replaced saves are backed up first (in the
     backups folder and the extra one). Returns the safety backup folder (or None)."""
+    if name.startswith('autosave-history/'):
+        return _restore_autosave(user_dir, name, running)
     if (running or game_running)():
         raise SaveError('save_game_running')
     cfg = prefs()
