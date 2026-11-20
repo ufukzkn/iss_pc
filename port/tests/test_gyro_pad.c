@@ -14,6 +14,9 @@ int tlggpu_overlay_captures_input(void) { return capture; }
 void tlggpu_overlay_notice(const char *s,float t) { (void)s;(void)t; }
 void tlggpu_graffiti_guide(int force) { (void)force; }
 float tlggpu_sensor_aim_scale(void) { return 1; }
+int runtime_mouse_aim_motion(float dx,float dy,float sensitivity,int invert_y,int active) {
+    (void)dx;(void)dy;(void)sensitivity;(void)invert_y;(void)active;return 0;
+}
 uintptr_t runtime_lookup(const RuntimeExport *t,size_t n,const char *s) { (void)t;(void)n;(void)s;return 0; }
 static bool SDLCALL sensors(void *data,bool on) { (void)data;(void)on;return true; }
 
@@ -27,11 +30,15 @@ static PadData read_sample(float pitch,float yaw,float roll) {
     SDL_UpdateGamepads(); /* virtual sensor reports are committed by the joystick update */
     SDL_Delay(2);
     PadData d;
+    capture_gamepad(&shared_snap); /* publish exactly the worker's immutable input snapshot */
+    pad_thread=1;
     sample_host(&d);
+    pad_thread=0;
     return d;
 }
 
 int main(void) {
+    pad_thread=0; /* deterministic virtual reports; production keeps Sunny's worker */
     for (int value=0;value<256;++value) {
         assert(stick_look_axis((uint8_t)value,1)==value);
         assert(stick_look_axis((uint8_t)value,0)==value); /* older/no-GPU settings */

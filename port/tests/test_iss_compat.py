@@ -121,7 +121,7 @@ class CompatibilityTests(unittest.TestCase):
             self.metadata(title)
             with mock.patch.object(run, 'mods_dir', return_value=self.moddir), mock.patch.object(run, 'mods_config', return_value=self.config):
                 rows = run.list_mods({'game_dir': str(self.game)})
-            self.assertEqual({r[0] for r in rows}, {'us.xml/Example', 'eu.xml/Example', run.CAMERA_MOD_KEY, 'iss_builtin_intro.xml/Skip intro movie'})
+            self.assertEqual({r[0] for r in rows}, {'us.xml/Example', 'eu.xml/Example', run.CAMERA_MOD_KEY, 'iss_builtin_intro.xml/Skip intro movie', 'iss_builtin_intro.xml/Disable motion blur'})
             lines = patches.prepare(self.game, self.out, self.moddir, self.config)
             data = (self.out / 'patches.bin').read_bytes()
             self.assertEqual(struct.unpack_from('<8sQQ', data), (b'G3PATCH2', 0, 2))

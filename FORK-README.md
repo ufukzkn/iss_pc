@@ -96,8 +96,8 @@ frame queue or waiting is added. Range: 0.25-3.00x; optional environment overrid
 
 ## Cache-loading experiment
 
-**Graphics > GPU and shaders > Load shader cache on demand (experimental)** is on
-by default in this fork. Once first-start compilation is complete, it restores the
+**Graphics > GPU and shaders > Load shader cache on demand (experimental)** is off
+by default, matching Sunny/upstream background loading. Enable it only for an A/B test. Once first-start compilation is complete, it restores the
 older first-use shader loading policy instead of importing the whole cache in the
 background. It is an A/B experiment for the reported FPS drop when loading ends,
 not a confirmed performance fix. First-start compilation and existing cache files
@@ -109,7 +109,7 @@ while playing** on to select upstream's background import. An explicit
 `ISS_WARMUP_BUILD_CACHED=1` / `TLG_WARMUP_BUILD_CACHED=1` still requests a background
 pipeline rebuild. Leave graphics, LS, save and camera position unchanged for the test.
 
-**Türkçe:** Deneme seçeneği varsayılan açık. Graphics > GPU and shaders bölümünden
+**Türkçe:** Deneme seçeneği Sunny/upstream ile aynı olacak şekilde varsayılan kapalı. Graphics > GPU and shaders bölümünden
 kapatıp oyunu yeniden başlatarak önceki sürümle aynı cache yükleme davranışını
 karşılaştırabilirsin. İlk shader derlemesi kapanmaz; cache ve kayıtlar silinmez.
 

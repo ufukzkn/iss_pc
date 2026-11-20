@@ -511,6 +511,7 @@ typedef struct {
     int touchpads, fingers[2];
     struct { bool down; float x, y; } finger[2][2];
     bool sensors; /* gyro and accelerometer read */
+    bool gyro_valid; /* aiming needs only a gyro, unlike graffiti orientation */
     float gyro[3], accel[3];
     uint16_t vendor;
     char type[24], name[96];
@@ -600,13 +601,18 @@ static void capture_gamepad(PadSnap *s) {
     const char *type=SDL_GetGamepadStringForType(SDL_GetGamepadType(g)), *name=SDL_GetGamepadName(g);
     snprintf(s->type,sizeof(s->type),"%s",type ? type : "");
     snprintf(s->name,sizeof(s->name),"%s",name ? name : "");
-    if (motion_sensors() && SDL_GamepadHasSensor(g,SDL_SENSOR_GYRO) && SDL_GamepadHasSensor(g,SDL_SENSOR_ACCEL)) {
+    if (motion_sensors() && SDL_GamepadHasSensor(g,SDL_SENSOR_GYRO)) {
+        if (!SDL_GamepadSensorEnabled(g,SDL_SENSOR_GYRO)) SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_GYRO,true);
+        s->gyro_valid=SDL_GetGamepadSensorData(g,SDL_SENSOR_GYRO,s->gyro,3);
+    }
+    if (motion_sensors() && s->gyro_valid && SDL_GamepadHasSensor(g,SDL_SENSOR_ACCEL)) {
         if (!SDL_GamepadSensorEnabled(g,SDL_SENSOR_GYRO)) {
             SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_GYRO,true);
             SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_ACCEL,true);
             printf("Runtime: motion sensors enabled on %s (accel gain %.1f)\n",s->name,accel_gain(s->vendor));
         }
-        s->sensors=SDL_GetGamepadSensorData(g,SDL_SENSOR_GYRO,s->gyro,3) && SDL_GetGamepadSensorData(g,SDL_SENSOR_ACCEL,s->accel,3);
+        if (!SDL_GamepadSensorEnabled(g,SDL_SENSOR_ACCEL)) SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_ACCEL,true);
+        s->sensors=SDL_GetGamepadSensorData(g,SDL_SENSOR_ACCEL,s->accel,3);
     }
 }
 static void apply_rumble(SDL_Gamepad *pad,uint16_t low,uint16_t high,uint32_t ms) {
@@ -1071,7 +1077,7 @@ static void key_axis(uint8_t *axis, bool negative, bool positive) {
     if (negative || positive) *axis=(uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0));
 }
 static GyroAim gyro_aim;
-static SDL_JoystickID gyro_device;
+static uintptr_t gyro_device;
 static uint64_t gyro_last_us;
 
 /* Real gyro only: never reuse the simulated graffiti angular velocity. Read once per pad
@@ -1079,7 +1085,7 @@ static uint64_t gyro_last_us;
 static void sample_gyro_aim(PadData *d, const PadSnap *g, int blocked) {
     TlgGpuInputSettings settings;
     tlggpu_input_settings(&settings);
-    const SDL_JoystickID id=g ? (SDL_JoystickID)(uintptr_t)g->pad : 0;
+    const uintptr_t id=g ? (uintptr_t)g->pad : 0;
     if (id!=gyro_device) { gyro_aim_reset(&gyro_aim); gyro_last_us=0; gyro_device=id; }
     const uint64_t now=d->timestamp;
     const float dt=gyro_last_us ? (float)(now-gyro_last_us)*1e-6f : 0;
@@ -1089,7 +1095,7 @@ static void sample_gyro_aim(PadData *d, const PadSnap *g, int blocked) {
                !motion.mode && !blocked && !touch && (d->buttons & BTN_L2);
     float velocity[3]={0,0,0};
     if (active) {
-        active=g->sensors;
+        active=g->gyro_valid;
         if (active) memcpy(velocity,g->gyro,sizeof(velocity));
     }
     const GyroAimParams p={settings.gyro_sensitivity,settings.gyro_smoothing,

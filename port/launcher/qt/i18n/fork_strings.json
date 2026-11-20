@@ -2,15 +2,15 @@
   "strings": {
     "saves_history_restore_body": {
       "en": "Recover the autosave from {date} into a new manual save slot? Your existing saves will be kept, and a safety backup is created first.",
-      "pt": "Recuperar o save automÃ¡tico de {date} em um novo slot manual? Seus saves atuais serÃ£o mantidos e uma cÃ³pia de seguranÃ§a serÃ¡ criada antes."
+      "pt": "Recuperar o save automático de {date} em um novo slot manual? Seus saves atuais serão mantidos e uma cópia de segurança será criada antes."
     },
     "saves_history_recovered": {
       "en": "Autosave recovered into a new manual save slot. Your existing saves were kept.",
-      "pt": "Save automÃ¡tico recuperado em um novo slot manual. Seus saves atuais foram mantidos."
+      "pt": "Save automático recuperado em um novo slot manual. Seus saves atuais foram mantidos."
     },
     "upd_helper_status_active": {
       "en": "UPDATE IN PROGRESS",
-      "pt": "ATUALIZAÃ‡ÃƒO EM ANDAMENTO"
+      "pt": "ATUALIZAÇÃO EM ANDAMENTO"
     },
     "upd_helper_status_done": {
       "en": "READY TO PLAY",
@@ -18,7 +18,7 @@
     },
     "upd_helper_status_error": {
       "en": "NEEDS ATTENTION",
-      "pt": "REQUER ATENÃ‡ÃƒO"
+      "pt": "REQUER ATENÇÃO"
     },
     "upd_helper_current_file": {
       "en": "CURRENT FILE",
@@ -29,64 +29,64 @@
       "pt": "DETALHES"
     },
     "upd_phase_inspect": {
-      "en": "Checking update recovery and retaining backupsâ€¦",
-      "pt": "Verificando recuperaÃ§Ã£o e retenÃ§Ã£o de backupsâ€¦"
+      "en": "Checking update recovery and retaining backups…",
+      "pt": "Verificando recuperação e retenção de backups…"
     },
     "upd_phase_cleanup": {
-      "en": "Cleaning up the unused downloadâ€¦",
-      "pt": "Limpando o download nÃ£o utilizadoâ€¦"
+      "en": "Cleaning up the unused download…",
+      "pt": "Limpando o download não utilizado…"
     },
     "upd_phase_extract": {
-      "en": "Extracting the updateâ€¦",
-      "pt": "Extraindo a atualizaÃ§Ã£oâ€¦"
+      "en": "Extracting the update…",
+      "pt": "Extraindo a atualização…"
     },
     "upd_phase_verify-package": {
-      "en": "Verifying package filesâ€¦",
-      "pt": "Verificando os arquivos do pacoteâ€¦"
+      "en": "Verifying package files…",
+      "pt": "Verificando os arquivos do pacote…"
     },
     "upd_phase_check-install": {
-      "en": "Checking the installationâ€¦",
-      "pt": "Verificando a instalaÃ§Ã£oâ€¦"
+      "en": "Checking the installation…",
+      "pt": "Verificando a instalação…"
     },
     "upd_phase_backup": {
-      "en": "Backing up savesâ€¦",
-      "pt": "Fazendo backup dos savesâ€¦"
+      "en": "Backing up saves…",
+      "pt": "Fazendo backup dos saves…"
     },
     "upd_phase_wait": {
-      "en": "Waiting for the launcher to closeâ€¦",
-      "pt": "Aguardando o launcher fecharâ€¦"
+      "en": "Waiting for the launcher to close…",
+      "pt": "Aguardando o launcher fechar…"
     },
     "upd_phase_apply": {
-      "en": "Backing up and installing program filesâ€¦",
-      "pt": "Salvando e instalando os arquivos do programaâ€¦"
+      "en": "Backing up and installing program files…",
+      "pt": "Salvando e instalando os arquivos do programa…"
     },
     "upd_phase_recover": {
-      "en": "Restoring the previous versionâ€¦",
-      "pt": "Restaurando a versÃ£o anteriorâ€¦"
+      "en": "Restoring the previous version…",
+      "pt": "Restaurando a versão anterior…"
     },
     "upd_phase_restart": {
-      "en": "Reopening the launcherâ€¦",
-      "pt": "Reabrindo o launcherâ€¦"
+      "en": "Reopening the launcher…",
+      "pt": "Reabrindo o launcher…"
     },
     "upd_phase_done": {
       "en": "Update finished. The launcher is reopening.",
-      "pt": "AtualizaÃ§Ã£o concluÃ­da. O launcher estÃ¡ reabrindo."
+      "pt": "Atualização concluída. O launcher está reabrindo."
     },
     "upd_phase_error": {
-      "en": "Update stopped â€” see the details below",
-      "pt": "AtualizaÃ§Ã£o interrompida â€” veja os detalhes abaixo"
+      "en": "Update stopped — see the details below",
+      "pt": "Atualização interrompida — veja os detalhes abaixo"
     },
     "upd_elapsed": {
-      "en": "Elapsed: {elapsed}s Â· Last progress: {idle}s ago",
-      "pt": "Tempo: {elapsed}s Â· Ãšltimo progresso hÃ¡ {idle}s"
+      "en": "Elapsed: {elapsed}s · Last progress: {idle}s ago",
+      "pt": "Tempo: {elapsed}s · Último progresso há {idle}s"
     },
     "upd_helper_hint": {
       "en": "Keep this window open. Large files and temporary Windows locks can take time. The launcher reopens automatically.",
-      "pt": "Mantenha esta janela aberta. Arquivos grandes e bloqueios temporÃ¡rios do Windows podem demorar. O launcher reabre automaticamente."
+      "pt": "Mantenha esta janela aberta. Arquivos grandes e bloqueios temporários do Windows podem demorar. O launcher reabre automaticamente."
     },
     "upd_helper_error_hint": {
       "en": "Keep the installation and recovery folders. Details are saved in update-error.log beside transaction.json.",
-      "pt": "Mantenha as pastas de instalaÃ§Ã£o e recuperaÃ§Ã£o. Os detalhes estÃ£o em update-error.log ao lado de transaction.json."
+      "pt": "Mantenha as pastas de instalação e recuperação. Os detalhes estão em update-error.log ao lado de transaction.json."
     },
     "upd_helper_close": {
       "en": "Close",
@@ -94,35 +94,35 @@
     },
     "upd_choose_release": {
       "en": "Release channel / build",
-      "pt": "Canal / versÃ£o"
+      "pt": "Canal / versão"
     },
     "upd_selected_release": {
       "en": "Selected release",
       "pt": "Release selecionada"
     },
     "upd_stable": {
-      "en": "Stable Â· recommended",
-      "pt": "EstÃ¡vel Â· recomendada"
+      "en": "Stable · recommended",
+      "pt": "Estável · recomendada"
     },
     "upd_beta": {
-      "en": "Beta Â· test build",
-      "pt": "Beta Â· teste"
+      "en": "Beta · test build",
+      "pt": "Beta · teste"
     },
     "upd_beta_warning": {
-      "en": "Official upstream test build: may regress or crash and may not include this forkâ€™s gyro or stick-gain additions. It installs separately; your stable fork stays.",
-      "pt": "Teste oficial do upstream: pode ter regressÃµes e nÃ£o incluir o gyro ou ganho do analÃ³gico deste fork. Ã‰ instalado separadamente; o fork estÃ¡vel permanece."
+      "en": "Official upstream test build: may regress or crash and may not include this fork’s gyro or stick-gain additions. It installs separately; your stable fork stays.",
+      "pt": "Teste oficial do upstream: pode ter regressões e não incluir o gyro ou ganho do analógico deste fork. É instalado separadamente; o fork estável permanece."
     },
     "upd_beta_empty": {
       "en": "No official upstream beta is currently published.",
-      "pt": "Nenhuma beta oficial do upstream estÃ¡ publicada no momento."
+      "pt": "Nenhuma beta oficial do upstream está publicada no momento."
     },
     "upd_baseline": {
-      "en": "Stable baseline Â· {tag}",
-      "pt": "Base estÃ¡vel Â· {tag}"
+      "en": "Stable baseline · {tag}",
+      "pt": "Base estável · {tag}"
     },
     "upd_baseline_missing": {
       "en": "The stable reference notes could not be retrieved. Check again when online.",
-      "pt": "NÃ£o foi possÃ­vel obter as notas da base estÃ¡vel. Verifique novamente quando estiver online."
+      "pt": "Não foi possível obter as notas da base estável. Verifique novamente quando estiver online."
     },
     "upd_beta_download": {
       "en": "Download beta",
@@ -142,7 +142,7 @@
     },
     "upd_beta_delete_confirm": {
       "en": "Delete {tag} from the beta library? The stable installation and shared game files, saves and caches stay.",
-      "pt": "Excluir {tag} da biblioteca de betas? A instalaÃ§Ã£o estÃ¡vel e os arquivos compartilhados do jogo, saves e caches ficam."
+      "pt": "Excluir {tag} da biblioteca de betas? A instalação estável e os arquivos compartilhados do jogo, saves e caches ficam."
     },
     "upd_beta_library": {
       "en": "Installed betas",
@@ -150,7 +150,7 @@
     },
     "upd_beta_library_note": {
       "en": "Keep multiple test builds here. Play any installed beta without downloading again; game files, saves and caches are shared with your stable installation.",
-      "pt": "Mantenha vÃ¡rias versÃµes de teste aqui. Jogue qualquer beta instalada sem baixar novamente; os arquivos do jogo, saves e caches sÃ£o compartilhados com a instalaÃ§Ã£o estÃ¡vel."
+      "pt": "Mantenha várias versões de teste aqui. Jogue qualquer beta instalada sem baixar novamente; os arquivos do jogo, saves e caches são compartilhados com a instalação estável."
     },
     "upd_beta_none_installed": {
       "en": "No betas installed yet.",
@@ -158,23 +158,23 @@
     },
     "upd_beta_location": {
       "en": "Beta packages are kept separately in {folder}. Your stable installation stays.",
-      "pt": "Os pacotes beta ficam separados em {folder}. A instalaÃ§Ã£o estÃ¡vel permanece."
+      "pt": "Os pacotes beta ficam separados em {folder}. A instalação estável permanece."
     },
     "upd_beta_ready": {
       "en": "{tag} is installed in your beta library. Ready to play.",
-      "pt": "{tag} estÃ¡ instalada na biblioteca de betas. Pronta para jogar."
+      "pt": "{tag} está instalada na biblioteca de betas. Pronta para jogar."
     },
     "upd_beta_starting": {
-      "en": "Preparing beta {tag}â€¦",
-      "pt": "Preparando beta {tag}â€¦"
+      "en": "Preparing beta {tag}…",
+      "pt": "Preparando beta {tag}…"
     },
     "upd_fork_beta": {
-      "en": "Fork beta Â· developer + fork features",
-      "pt": "Beta do fork Â· developer + recursos do fork"
+      "en": "Fork beta · developer + fork features",
+      "pt": "Beta do fork · developer + recursos do fork"
     },
     "upd_official_beta": {
-      "en": "HayatoG beta Â· original package",
-      "pt": "Beta HayatoG Â· pacote original"
+      "en": "HayatoG beta · original package",
+      "pt": "Beta HayatoG · pacote original"
     },
     "upd_beta_periodic": {
       "en": "Check fork and official betas every 6 hours",
@@ -182,29 +182,29 @@
     },
     "upd_beta_periodic_note": {
       "en": "While the launcher is open; overdue checks run on the next opening. Downloads start only when you choose a build.",
-      "pt": "Enquanto o launcher estiver aberto; verificaÃ§Ãµes pendentes ocorrem na prÃ³xima abertura. O download sÃ³ comeÃ§a quando vocÃª escolhe uma versÃ£o."
+      "pt": "Enquanto o launcher estiver aberto; verificações pendentes ocorrem na próxima abertura. O download só começa quando você escolhe uma versão."
     }
   },
   "overrides": {
     "upd_download": {
       "en": "Latest release",
-      "pt": "Ãšltima release"
+      "pt": "Última release"
     },
     "upd_check_on_open_note": {
       "en": "Uses the public GitHub API to check releases. Sends no player data.",
-      "pt": "Usa a API pÃºblica do GitHub para verificar releases. NÃ£o envia dados do jogador."
+      "pt": "Usa a API pública do GitHub para verificar releases. Não envia dados do jogador."
     },
     "err_zip_empty": {
-      "en": "There are no inFAMOUS saves in {detail} (expected: savedata/<user>/CUSA00004/â€¦ or savedata/<user>/CUSA00223/â€¦).",
-      "pt": "NÃ£o hÃ¡ saves do inFAMOUS dentro de {detail} (esperado: savedata/<usuÃ¡rio>/CUSA00004/â€¦ ou savedata/<usuÃ¡rio>/CUSA00223/â€¦)."
+      "en": "There are no inFAMOUS saves in {detail} (expected: savedata/<user>/CUSA00004/… or savedata/<user>/CUSA00223/…).",
+      "pt": "Não há saves do inFAMOUS dentro de {detail} (esperado: savedata/<usuário>/CUSA00004/… ou savedata/<usuário>/CUSA00223/…)."
     },
     "upd_beta_intro": {
       "en": "Download test builds alongside your stable installation, then play, inspect their release notes or delete them here. Each beta is kept until you choose to remove it.",
-      "pt": "Baixe versÃµes de teste ao lado da instalaÃ§Ã£o estÃ¡vel; jogue, veja as notas ou exclua-as aqui. Cada beta fica guardada atÃ© vocÃª decidir removÃª-la."
+      "pt": "Baixe versões de teste ao lado da instalação estável; jogue, veja as notas ou exclua-as aqui. Cada beta fica guardada até você decidir removê-la."
     },
     "upd_beta_page": {
       "en": "Release page",
-      "pt": "PÃ¡gina da release"
+      "pt": "Página da release"
     }
   }
 }
