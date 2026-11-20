@@ -172,7 +172,7 @@ class SavesControllerTests(unittest.TestCase):
         self.saves.reload()
         self.assertEqual('Auto', self.saves.slots[0]['kindText'])
         self.backend.setLang('pt_BR')
-        self.assertEqual('AutomÃ¡tico', self.saves.slots[0]['kindText'])
+        self.assertEqual('Automático', self.saves.slots[0]['kindText'])
 
     def test_backup_now_and_keep(self):
         put_slot(self.default, 'infamousssUser0')

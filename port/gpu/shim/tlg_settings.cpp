@@ -143,12 +143,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.rumble = i != 0;
     } else if (key == "mouse_sensitivity") {
         v.mouse_sensitivity = Clamp(value.empty() ? 1.0f : f, 0.05f, 10.0f);
-    } else if (key == "mouse_smoothing") {
-        v.mouse_smoothing = Clamp(f, 0.0f, 0.95f);
-    } else if (key == "mouse_accel") {
-        v.mouse_accel = Clamp(f, 0.0f, 2.0f);
-    } else if (key == "mouse_deadzone") {
-        v.mouse_deadzone = Clamp(f, 0.0f, 0.5f);
     } else if (key == "stick_look_sensitivity") {
         v.stick_look_sensitivity = std::isfinite(f) ? Clamp(f, 0.25f, 3.0f) : 1.0f;
     } else if (key == "gyro_aim") {
