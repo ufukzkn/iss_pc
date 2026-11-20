@@ -44,7 +44,8 @@ SECTIONS = (
                      's:write_merge', 'TLG_DEFERRED_READBACK', 'TLG_STALE_READBACK', 'TLG_DRAIN_SLEEP', 's:precompile_shaders',
                      's:close_on_play', 's:reopen_launcher')),
     ('gfx_sec_vram', ('s:vram_auto', 's:vram_budget_mb')),
-    ('gfx_sec_overlay', ('s:show_fps',) + OVERLAY_IDS),
+    # The performance overlay's options are not shown here (2026-11-11): the in-game overlay (F1) has
+    # them all, and F10 shows or hides it. tlg.ini keeps them; nothing about them changes.
 )
 STEPS = {'menu:overlay_scale': 10, 's:vram_budget_mb': 200}
 
@@ -55,6 +56,7 @@ class Graphics(QObject):
     dlssProgressed = Signal(int, int)
     dlssChecked = Signal(object)
     dlssFinished = Signal(object)    # a Component, or a DlssError
+    dlssAutoDone = Signal(object)    # [problem texts] of the automatic download (empty: ready)
     scrollRequested = Signal(int)   # used by the screenshot tool
     dialogChanged = Signal()
 
@@ -81,6 +83,7 @@ class Graphics(QObject):
         self.dlssChecked.connect(self._on_dlss_checked)
         self.dlssProgressed.connect(self._on_dlss_progress)
         self.dlssFinished.connect(self._on_dlss_finished)
+        self.dlssAutoDone.connect(self._on_dlss_auto_done)
         backend.profileChanged.connect(self.rebuild)
         backend.langChanged.connect(self.rebuild)
         backend.saves.changed.connect(self.changed)
@@ -558,6 +561,49 @@ class Graphics(QObject):
             self.dlssFinished.emit(result)
         threading.Thread(target=work, daemon=True).start()
         self.changed.emit()
+
+    @Slot()
+    def autoDlss(self):
+        """The upscaler was set to NVIDIA DLSS: fetch at once whatever is missing (NVIDIA's DLL from NVIDIA's
+        GitHub, the port's bridge from the port's GitHub releases), no button to press."""
+        if self._dlss_busy:
+            return
+        self._dlss_confirm, self._dlss_busy = False, True
+        self._dlss_cancel.clear()
+        self._dlss_done = self._dlss_total = 0
+        self._dlss_msg, self._dlss_tone = self.t('dlss_auto_working'), 'info'
+        target, configured, user = self._dlss_target(), self._dlss_configured(), tlg_run.user_dir()
+        probes = self.probes
+
+        def work():
+            problems = []
+            try:
+                state = probes['dlss_status']() if 'dlss_status' in probes else dlss_setup.status(
+                    user, configured, tlg_run.V2_PROBE.parent)
+                steps = []
+                if not state['dll'].ok:
+                    steps.append(probes.get('dlss_download', dlss_setup.download))
+                if not state['bridge'].ok:
+                    steps.append(probes.get('dlss_bridge_download', dlss_setup.download_bridge))
+                for step in steps:
+                    try:
+                        step(target, progress=self.dlssProgressed.emit, cancel=self._dlss_cancel)
+                    except dlss_setup.DlssError as error:
+                        problems.append(self.t('dlss_err_' + error.key, detail=error.detail))
+            except Exception as error:      # never leave the screen stuck on "downloading"
+                problems.append(self.t('dlss_err_network', detail=error))
+            self.dlssAutoDone.emit(problems)
+        threading.Thread(target=work, daemon=True).start()
+        self.changed.emit()
+
+    def _on_dlss_auto_done(self, problems):
+        self._dlss_busy = False
+        if problems:
+            self._dlss_msg, self._dlss_tone = self.t('dlss_auto_partial', detail=' '.join(problems)), 'bad'
+        else:
+            self._dlss_msg, self._dlss_tone = self.t('dlss_auto_ready'), 'good'
+        self.changed.emit()
+        self._check_dlss()
 
     @Slot()
     def cancelDlssDownload(self):

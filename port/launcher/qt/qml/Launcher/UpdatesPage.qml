@@ -85,6 +85,72 @@ Item {
                 }
             }
 
+            // ---- the latest beta (GitHub pre-release): notes, download and install into a new folder -------
+            Rectangle {
+                width: parent.width; height: betaCol.implicitHeight + 40
+                radius: 14; color: Theme.card; border.width: 1
+                border.color: Updates.hasBeta ? Qt.rgba(Theme.cyan.r, Theme.cyan.g, Theme.cyan.b, 0.6) : Theme.cardLine
+                Rectangle { visible: Updates.hasBeta; width: 3; height: parent.height - 2; x: 1; y: 1; color: Theme.cyan }
+                Column {
+                    id: betaCol
+                    x: 22; y: 20; width: parent.width - 44; spacing: 12
+                    Row {
+                        spacing: 14
+                        Text { text: Theme.tr("upd_beta_title"); color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 12
+                               font.weight: Font.Bold; font.capitalization: Font.AllUppercase; font.letterSpacing: 1
+                               anchors.verticalCenter: parent.verticalCenter }
+                        Tag { visible: Updates.hasBeta; text: "BETA"; tone: "warn"; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { visible: Updates.hasBeta; width: parent.width; text: Updates.betaTag + (Updates.betaPublished !== "" ? "  ·  " + Updates.betaPublished : "")
+                           color: Theme.cyan; wrapMode: Text.WordWrap; font.family: Theme.fontDisplay; font.variableAxes: ({ "wght": 800 }); font.pixelSize: 26
+                           font.weight: Font.ExtraBold; font.letterSpacing: 1 }
+                    Text { width: parent.width; text: Updates.betaStatus; wrapMode: Text.WordWrap; color: Theme.text
+                           font.family: Theme.fontText; font.pixelSize: 14; font.weight: Font.DemiBold }
+                    Text { width: parent.width; text: Theme.tr("upd_beta_intro"); wrapMode: Text.WordWrap; color: Theme.textDim
+                           font.family: Theme.fontText; font.pixelSize: 12; lineHeight: 1.3; lineHeightMode: Text.ProportionalHeight }
+                    Column {
+                        visible: Updates.busy
+                        width: betaCol.width; spacing: 6
+                        Rectangle {
+                            width: parent.width; height: 6; radius: 3; color: Theme.ghostLine
+                            Rectangle { width: parent.width * Math.max(0, Math.min(1, Updates.progress)); height: parent.height; radius: 3; color: Theme.cyan }
+                        }
+                        Text { text: Updates.progressText; color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12 }
+                    }
+                    Flow {
+                        width: betaCol.width; spacing: 10
+                        GhostButton { visible: Updates.packaged && !Updates.canRestart; tone: "primary"; accent: Theme.cyan
+                                      text: Theme.tr("upd_beta_install"); enabled: Updates.canInstallBeta; onClicked: Updates.installBeta() }
+                        GhostButton { visible: Updates.canCancel; text: Theme.tr("upd_cancel"); onClicked: Updates.cancelDownload() }
+                        GhostButton { visible: Updates.canRestart; tone: "primary"; accent: Theme.cyan; text: Theme.tr("upd_restart"); onClicked: Updates.restart() }
+                        GhostButton { visible: Updates.hasBeta; text: Theme.tr("upd_beta_page"); onClicked: Updates.openBetaPage() }
+                    }
+                }
+            }
+            Row {
+                visible: Updates.betaNotes !== ""
+                spacing: 10
+                Rectangle { width: 4; height: 20; color: Theme.cyan; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: Theme.tr("upd_beta_notes"); color: "#fff"; font.family: Theme.fontDisplay; font.variableAxes: ({ "wght": 800 }); font.pixelSize: 22
+                       font.weight: Font.ExtraBold; font.capitalization: Font.AllUppercase; font.letterSpacing: 1.3
+                       anchors.verticalCenter: parent.verticalCenter }
+            }
+            Rectangle {
+                visible: Updates.betaNotes !== ""
+                width: parent.width; height: Math.min(betaNotesText.implicitHeight + 36, 420)
+                radius: 12; color: Theme.card; border.width: 1; border.color: Theme.cardLine
+                Flickable {
+                    id: betaNotesFlick
+                    x: 20; y: 18; width: parent.width - 40; height: parent.height - 36
+                    contentWidth: width; contentHeight: betaNotesText.implicitHeight
+                    clip: true; boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { }
+                    TextEdit { id: betaNotesText; width: betaNotesFlick.width - 10; text: Updates.betaNotes; readOnly: true; selectByMouse: true
+                               wrapMode: TextEdit.Wrap; color: Theme.textSoft; selectionColor: Theme.cyan; selectedTextColor: "#001318"
+                               font.family: Theme.fontText; font.pixelSize: 14 }
+                }
+            }
+
             Rectangle {
                 width: parent.width; height: optionRow.implicitHeight + 36
                 radius: 12; color: Theme.card; border.width: 1; border.color: Theme.cardLine

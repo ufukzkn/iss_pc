@@ -2736,13 +2736,14 @@ void SetMousePad(bool active, float x, float y, bool touching, bool clicking) {
 bool Visible() {
     const auto& s = TlgSettings::Get();
     const auto now = std::chrono::steady_clock::now();
-    bool power_wheel_visible=false;
+    bool power_wheel_visible=false,trophy_popup=false;
 #ifdef TLG_RENDERER_V2
     int wheel_open,wheel_choice;
     runtime_power_wheel_visual_status(&wheel_open,&wheel_choice);
     power_wheel_visible=wheel_open&&s.iss_power_switch_enabled;
+    trophy_popup=TlgTrophiesToastActive();
 #endif
-    return initialized && (power_wheel_visible || loading || background_total || menu_open || text_entry_active || choice_active ||
+    return initialized && (power_wheel_visible || trophy_popup || loading || background_total || menu_open || text_entry_active || choice_active ||
                            message_active || guide_active || progress_on || now < progress_until || now < toast_until ||
                            NoticeActive() || mouse_pad_on ||
                            choice_retiring || s.show_fps ||
@@ -2896,7 +2897,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
 #ifdef TLG_RENDERER_V2
     int power_open,power_choice;runtime_power_wheel_visual_status(&power_open,&power_choice);
     if(power_open)TlgPowerArt::UpdateTexture();
-    if(menu_open && TlgSettings::Get().menu_tab==6)TlgTrophiesUpdateTextures();
+    if((menu_open && TlgSettings::Get().menu_tab==6) || TlgTrophiesToastActive())TlgTrophiesUpdateTextures();
 #endif
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
@@ -2933,6 +2934,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (mouse_pad_on && !menu_open) {
         MousePadBox();
     }
+#ifdef TLG_RENDERER_V2
+    if (!loading) {
+        TlgTrophiesToast(base_scale);   // trophy earned: icon + name, top right
+    }
+#endif
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{

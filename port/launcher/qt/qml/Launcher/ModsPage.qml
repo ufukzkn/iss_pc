@@ -61,6 +61,7 @@ Item {
         }
         delegate: Item {
             id: row
+            property bool on: modelData.on === true   // flipped here at once; the list is not rebuilt
             width: list.width
             height: card.height + 8
             Rectangle {
@@ -100,13 +101,16 @@ Item {
                     objectName: "modToggle_" + modelData.key
                     anchors.right: parent.right; anchors.rightMargin: 20; anchors.verticalCenter: parent.verticalCenter
                     accent: page.accent
-                    checked: modelData.on === true
-                    onToggled: (v) => Backend.setModEnabled(modelData.key, v)
+                    checked: row.on
+                    onToggled: (v) => { row.on = v; Backend.setModEnabled(modelData.key, v) }
                 }
             }
         }
+        // In the page's right margin, like the other tabs (inside the list it sat on the mods' switches).
         ScrollBar.vertical: ScrollBar {
             id: bar
+            parent: page
+            x: page.width - width - 12; y: list.y; height: list.height
             contentItem: Rectangle { implicitWidth: 6; radius: 3; color: bar.pressed ? Theme.ghostLineHover : Theme.ghostLine }
             background: Item { }
         }

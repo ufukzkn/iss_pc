@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """The QObject the QML screens talk to. All real work is delegated to the modules the Tk
 launcher uses (infamous_run: prepare/launch/build_env/save_experimental; backports_table)."""
+import datetime
 import os
 import threading
 from pathlib import Path
@@ -16,6 +17,8 @@ from .logic import backports_table, tlg_run
 import advanced_table  # noqa: E402
 import logtail  # noqa: E402
 import precompile  # noqa: E402
+import userdata  # noqa: E402
+import trophies  # noqa: E402
 
 LOG_LINES = 500           # lines the log panel keeps
 LOG_POLL_MS = 1000        # how often the game's log file is read for the panel
@@ -203,6 +206,7 @@ class Backend(QObject):
         self._tail_timer = QTimer(self)
         self._tail_timer.setInterval(LOG_POLL_MS)
         self._tail_timer.timeout.connect(self._poll_log)
+        self._trophies = []
         self.refresh()
         self.saves = Saves(self, self.probes.get('saves'))
         self.support = Support(self, self.probes.get('support'))
@@ -274,6 +278,7 @@ class Backend(QObject):
         self._news = self.probe('news', lambda: logic.news(self.t_, self.t_.pt()))
         savedata = tlg_run.user_dir() / 'savedata'
         self._save = self.probe('save', lambda: logic.last_save_title(savedata))
+        self._load_trophies()
         self.chipsChanged.emit()
         self.stateChanged.emit()
         self.profileChanged.emit()
@@ -381,8 +386,14 @@ class Backend(QObject):
 
     @Property(str, notify=stateChanged)
     def heroKicker(self):
-        serial = (logic.shader_cache.title_id(self.settings.get('game_dir', '')) or 'CUSA00223')
-        return self.t_('hero_kicker', serial=serial, version='1.07')
+        game = tlg_run.GAMES[tlg_run.current_game()]
+        serial = (logic.shader_cache.title_id(self.settings.get('game_dir', '')) or
+                  game.get('titles', ('CUSA00223',))[0])
+        return self.t_('hero_kicker', serial=serial, version=game['version'])
+
+    @Property(str, notify=stateChanged)
+    def heroTagline(self):
+        return self.t_('hero_tagline_first_light' if tlg_run.current_game() == 'first_light' else 'hero_tagline')
 
     @Property(str, notify=stateChanged)
     def playSubtitle(self):
@@ -442,6 +453,37 @@ class Backend(QObject):
             if path:
                 return QUrl.fromLocalFile(str(path)).toString()
         return ''
+
+    @Property(bool, notify=gameDirChanged)
+    def artAnimated(self):
+        """True when the Play tab shows an animated GIF (whole, not cropped)."""
+        return play_art(self.settings)[1] == 'gif'
+
+    @Property(bool, notify=gameDirChanged)
+    def artWhole(self):
+        """True when the Play tab's picture is shown whole on its own background colour ('paper'): a GIF,
+        or the game's own picture (GAME_PICTURE)."""
+        return play_art(self.settings)[1] in ('gif', 'whole')
+
+    @Property(bool, notify=gameDirChanged)
+    def artBackdrop(self):
+        """True when the Play tab's picture fills the whole tab behind the cards and buttons (Second
+        Son's pic0.png from the player's game folder)."""
+        return play_art(self.settings)[1] == 'backdrop'
+
+    @Property(str, notify=gameDirChanged)
+    def artBackground(self):
+        """A whole picture's background colour (fills the panel and the page around it); '' otherwise."""
+        path, kind = play_art(self.settings)
+        if kind == 'gif':
+            return art_colours(path)[0]
+        return paper_colour(path) if kind == 'whole' else ''
+
+    @Property(str, notify=gameDirChanged)
+    def artShade(self):
+        """The colour under the Play buttons: the animated picture's smoke colour, else the drawn art's black."""
+        path, kind = play_art(self.settings)
+        return (art_colours(path)[1] if kind == 'gif' else '') or '#08080a'
 
     @Property(str, notify=logChanged)
     def logText(self):
@@ -705,8 +747,9 @@ class Backend(QObject):
 
     @Slot(str, bool)
     def setModEnabled(self, key, enabled):
+        """Saves the switch. The list is not rebuilt (the switch shows its new state itself): a rebuilt
+        list started again at the top, so every toggle scrolled the Mods page all the way up."""
         tlg_run.set_mod_enabled(key, enabled)
-        self.modsChanged.emit()
 
     @Slot()
     def refreshMods(self):
@@ -847,6 +890,65 @@ class Backend(QObject):
         tlg_run.save_settings(self.settings)
         self.gameLanguageChanged.emit()
 
+    # -- trophies showcase (Play tab; the port tracks Second Son's 48 and First Light's 25) ---------
+    def _load_trophies(self):
+        rows = []
+        game = tlg_run.current_game()
+        if game in trophies.GAMES and self.settings.get('game_dir') and 'trophies' not in self.probes:
+            try:
+                rows = trophies.showcase(self.settings['game_dir'], tlg_run.user_dir(), game)
+            except Exception:   # never stops the launcher: the card just stays hidden
+                rows = []
+        elif 'trophies' in self.probes:
+            rows = self.probes['trophies']()
+        for row in rows:
+            if row['earned'] and row['recovered']:
+                row['status'] = self.t_('trophy_recovered')
+            elif row['earned'] and row['time']:
+                stamp = datetime.datetime.fromtimestamp(row['time']).strftime('%Y-%m-%d %H:%M')
+                row['status'] = self.t_('trophy_earned_on', date=stamp)
+            elif row['earned']:
+                row['status'] = self.t_('trophy_earned')
+            else:
+                row['status'] = self.t_('trophy_not_earned')
+            row['icon'] = QUrl.fromLocalFile(row['icon']).toString() if row.get('icon') else ''
+        self._trophies = rows
+
+    @Property('QVariantList', notify=stateChanged)
+    def trophies(self):
+        return self._trophies
+
+    @Property(int, notify=stateChanged)
+    def trophiesEarned(self):
+        return sum(1 for row in self._trophies if row['earned'])
+
+    # -- which game (Second Son / First Light) -------------------------------------------------
+    @Property('QVariantList', notify=langChanged)
+    def gameOptions(self):
+        return [{'value': key, 'label': self.t_('game_' + key)} for key in tlg_run.GAMES]
+
+    @Property(int, notify=gameDirChanged)
+    def gameIndex(self):
+        return list(tlg_run.GAMES).index(tlg_run.current_game())
+
+    @Property(str, notify=gameDirChanged)
+    def gameName(self):
+        return tlg_run.GAMES[tlg_run.current_game()]['name']
+
+    @Slot(str)
+    def setGame(self, key):
+        """Switches between the games: their folders, saves, settings and shader caches stay apart."""
+        if key not in tlg_run.GAMES or key == tlg_run.current_game() or self._play_state != 'idle':
+            return
+        tlg_run.switch_game(self.settings, key)
+        tlg_run.save_settings(self.settings)
+        self._message = ''
+        self._verify_text, self._verify_level = '', ''
+        self.verifyChanged.emit()
+        self.reload_user()          # tlg.ini, fixes and the last save come from the game's own folder
+        self.gameLanguageChanged.emit()
+        self.modsChanged.emit()
+
     # -- controller guides ----------------------------------------------------------------------
     @Property('QVariantList', constant=True)
     def guideKinds(self):
@@ -949,7 +1051,145 @@ class Backend(QObject):
             tlg_run.save_experimental(self.settings, self.fix_states)
 
 
+ART_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
+
+
+def custom_art(game):
+    """The player's own picture for a game's Play tab: <data folder>/launcher-art/<game>.jpg|png|webp
+    (second_son, first_light). Never shipped: the player puts it there."""
+    folder = userdata.user_dir(tlg_run.PORT_DIR) / 'launcher-art'
+    for ext in ART_EXTENSIONS:
+        if (folder / f'{game}{ext}').is_file():
+            return folder / f'{game}{ext}'
+    return None
+
+
+def animated_art(game):
+    """The animated Play tab picture: the player's own <data folder>/launcher-art/<game>.gif, else the
+    one shipped with the launcher (qt/assets/art/<game>.gif), or None."""
+    for path in (userdata.user_dir(tlg_run.PORT_DIR) / 'launcher-art' / f'{game}.gif',
+                 logic.HERE / 'assets' / 'art' / f'{game}.gif'):
+        if path.is_file():
+            return path
+    return None
+
+
+_art_colours = {}
+
+
+def art_colours(path):
+    """(background, smoke) colours of a picture as '#rrggbb': the average of its side edges, and
+    the average of the coloured (saturated) pixels of its bottom 8%. Remembered per file version."""
+    from PySide6.QtGui import QColor, QImage
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return '', ''
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    if key in _art_colours:
+        return _art_colours[key]
+    image = QImage(str(path))   # the first frame of a GIF
+    result = ('', '')
+    if not image.isNull():
+        w, h = image.width(), image.height()
+        # the background: both side edges around the middle (corners often hold part of the subject)
+        corner = [image.pixelColor(x, y) for x in (*range(0, max(1, w // 30)), *range(w - max(1, w // 30), w))
+                  for y in range(int(h * 0.3), int(h * 0.55), 4)]
+        bottom = [image.pixelColor(x, y) for x in range(0, w, 3) for y in range(int(h * 0.92), h, 3)]
+        smoke = [c for c in bottom if c.hsvSaturationF() > 0.35 and c.valueF() > 0.25] or bottom
+
+        def mean(colours):
+            n = max(1, len(colours))
+            return QColor(sum(c.red() for c in colours) // n, sum(c.green() for c in colours) // n,
+                          sum(c.blue() for c in colours) // n).name()
+        result = (mean(corner), mean(smoke))
+    _art_colours[key] = result
+    return result
+
+
+def paper_colour(path):
+    """The background colour of a still picture shown whole: the median of its border pixels, as
+    '#rrggbb' (a subject touching one edge does not change it). Remembered per file version."""
+    from PySide6.QtGui import QColor, QImage
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return ''
+    key = ('paper', str(path), stat.st_size, stat.st_mtime_ns)
+    if key not in _art_colours:
+        image = QImage(str(path))
+        result = ''
+        if not image.isNull():
+            w, h = image.width(), image.height()
+            border = ([image.pixelColor(x, y) for x in range(0, w, 2) for y in (0, h - 1)] +
+                      [image.pixelColor(x, y) for y in range(0, h, 2) for x in (0, w - 1)])
+
+            def median(values):
+                values = sorted(values)
+                return values[len(values) // 2]
+            result = QColor(median(c.red() for c in border), median(c.green() for c in border),
+                            median(c.blue() for c in border)).name()
+        _art_colours[key] = result
+    return _art_colours[key]
+
+
+# The game's own picture for a game's Play tab, read from the player's game folder (never shipped), and
+# how it is shown: Second Son's pic0.png (Delsin, black and white) behind the whole tab ('backdrop');
+# First Light's square game icon (Fetch and the title on white) whole on its own paper ('whole').
+GAME_PICTURE = {'second_son': ('pic0.png', 'backdrop'), 'first_light': ('icon0.png', 'whole')}
+
+
+def game_picture(settings, game):
+    """(path, kind) of the player's game folder's picture for this game's Play tab, or (None, '')."""
+    name, kind = GAME_PICTURE.get(game, (None, ''))
+    if not name:
+        return None, ''
+    game_dir = settings.get('game_dir', '')
+    # only from this game's own folder (a Second Son folder chosen by mistake must not show its icon)
+    # (Second Son lists no titles in GAMES: US and European, as infamous_run.check_game assumes)
+    if logic.shader_cache.title_id(game_dir) not in tlg_run.GAMES[game].get('titles', ('CUSA00223', 'CUSA00004')):
+        return None, ''
+    path = Path(game_dir) / 'sce_sys' / name
+    return (path, kind) if path.is_file() else (None, '')
+
+
+def play_art(settings):
+    """(picture, kind) for the Play tab. kind 'gif': an animated GIF shown whole (the player's own
+    launcher-art/<game>.gif first); then the game's own picture (GAME_PICTURE: 'whole' shown whole,
+    'backdrop' behind the whole tab); then a shipped GIF; 'cover': a picture that covers the panel (the
+    drawn art, ...); (None, '') if none."""
+    game = tlg_run.current_game()
+    own_gif = userdata.user_dir(tlg_run.PORT_DIR) / 'launcher-art' / f'{game}.gif'
+    if own_gif.is_file():
+        return own_gif, 'gif'
+    picture, kind = game_picture(settings, game)
+    if picture:
+        return picture, kind
+    animated = animated_art(game)
+    if animated:
+        return animated, 'gif'
+    for name in ('pic1.png', 'pic0.png'):
+        cover = _cover_art(settings, name)
+        if cover:
+            return cover, 'cover'
+    return None, ''
+
+
 def _art(settings, name):
+    """The Play tab's picture (play_art)."""
+    return play_art(settings)[0]
+
+
+def _cover_art(settings, name):
+    """The covering picture: always the port's drawn artwork (qt/assets/art/<game>.png, made by
+    art/draw_art.py: no game asset). Only if that file is missing from the package: the player's
+    launcher-art picture, then the game's pic1/pic0."""
+    drawn = logic.HERE / 'assets' / 'art' / f'{tlg_run.current_game()}.png'
+    if drawn.is_file():
+        return drawn
+    custom = custom_art(tlg_run.current_game())
+    if custom:
+        return custom
     for folder in (Path(settings.get('game_dir', '')) / 'sce_sys', tlg_run.REPO_DIR / 'dump' / 'sce_sys'):
         if (folder / name).is_file():
             return folder / name

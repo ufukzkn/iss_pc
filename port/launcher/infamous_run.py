@@ -37,11 +37,73 @@ sys.path.insert(0, str(PORT_DIR / 'scripts'))
 import mod_patches  # noqa: E402
 
 
+# The games this launcher starts (2026-11-11). inFAMOUS First Light (CUSA00575 1.04, the standalone)
+# runs on the same engine and the same port as Second Son: only its own game code, its "full game"
+# entitlement and its own data folder (saves, tlg.ini, shader caches) differ. The Second Son-only
+# features (mods, mouse camera, karma switcher, trophies) check the title and code and stay off.
+GAMES = {
+    'second_son': {'name': 'inFAMOUS Second Son', 'user_sub': '', 'version': '1.07'},
+    'first_light': {'name': 'inFAMOUS First Light', 'user_sub': 'first-light', 'version': '1.04',
+                    'titles': ('CUSA00575',), 'eboot': (0x6ffd70, 136_535_375),
+                    'addcont': ('UNLOCKAPPLICATIO',), 'art_min': 500,   # 652 art files in 1.04
+                    'art_required': ('cache/all_shaders.xpps', 'cache/psarc/music_a.psarc',
+                                     'cache/psarc/music_b.psarc', 'ui/vshell/save_icon.png')},
+}
+DEFAULT_GAME = 'second_son'
+_game = DEFAULT_GAME
+
+
+def current_game():
+    """'second_son' | 'first_light': the game the launcher starts (settings['game'])."""
+    return _game
+
+
+def select_game(settings):
+    """Makes settings['game'] the current game (user_dir() and the checks follow it)."""
+    global _game
+    game = settings.get('game', DEFAULT_GAME)
+    _game = game if game in GAMES else DEFAULT_GAME
+    settings['game'] = _game
+    return _game
+
+
+def guess_game_dir(game, settings):
+    """A folder of `game` next to the other game's (the PS4 dump tools put every title in one folder,
+    named after its serial); '' when none is found."""
+    titles = GAMES[game].get('titles', ('CUSA00223', 'CUSA00004'))
+    for known in (settings.get('game_dir') or '', *(settings.get('game_dirs') or {}).values()):
+        if not known:
+            continue
+        for title in titles:
+            candidate = Path(known).parent / title
+            if (candidate / 'eboot.bin').is_file():
+                return str(candidate)
+    return ''
+
+
+def switch_game(settings, game):
+    """Changes the game: its folder comes back from settings['game_dirs'] (or is guessed), the
+    other game's folder is kept there. The caller saves the settings."""
+    if game not in GAMES or game == settings.get('game', DEFAULT_GAME):
+        select_game(settings)
+        return
+    dirs = dict(settings.get('game_dirs') or {})
+    dirs[settings.get('game', DEFAULT_GAME)] = settings.get('game_dir', '')
+    settings['game_dir'] = dirs.get(game) or guess_game_dir(game, settings)
+    dirs[game] = settings['game_dir']
+    settings['game_dirs'] = dirs
+    settings['game'] = game
+    select_game(settings)
+
+
 def user_dir():
     """The folder of saves, tlg.ini, backups and GPU caches: ISS_USER_DIR, else the per-user pointer
     file (survives reinstalling), else <port folder>/user (userdata.py has the rules). Always call
-    this instead of caching it: the Qt launcher changes it while running."""
-    return userdata.user_dir(PORT_DIR)
+    this instead of caching it: the Qt launcher changes it while running. First Light keeps its own
+    in <that folder>/first-light (its saves and settings never mix with Second Son's)."""
+    base = userdata.user_dir(PORT_DIR)
+    sub = GAMES[_game]['user_sub']
+    return base / sub if sub else base
 
 
 def mods_dir():
@@ -360,6 +422,7 @@ def load_settings():
     if saved and saved.get('settings_rev', 1) < 2:
         settings['eager_readback'] = False
     settings['settings_rev'] = SETTINGS_REV
+    select_game(settings)
     return settings
 
 
@@ -411,9 +474,17 @@ TEXT = {
                   'or not downloaded yet (OneDrive, an unfinished copy).',
                   'a pasta art tem só {detail} arquivos; o jogo completo tem cerca de 1.800 arquivos (27 GB). Alguns podem '
                   'estar faltando ou ainda não baixados (OneDrive, cópia incompleta).'),
+    'other_game_eboot': ('eboot.bin is not the one from inFAMOUS First Light 1.04 ({detail}); First Light is only '
+                         'tested with CUSA00575 1.04. Copy every file of its latest update over the game folder.',
+                         'O eboot.bin não é o do inFAMOUS First Light 1.04 ({detail}); o First Light só foi testado '
+                         'com o CUSA00575 1.04. Copie todos os arquivos do update mais recente por cima da pasta do jogo.'),
+    'other_game_title': ('{detail}: this folder is not inFAMOUS First Light (CUSA00575). Choose the First Light folder, '
+                         'or pick Second Son in the game list.',
+                         '{detail}: esta pasta não é do inFAMOUS First Light (CUSA00575). Escolha a pasta do First Light '
+                         'ou selecione o Second Son na lista de jogos.'),
 }
 # Problems that are reported but do not block Play.
-WARNINGS = {'other_eboot', 'old_param', 'other_title', 'small_art'}
+WARNINGS = {'other_eboot', 'old_param', 'other_title', 'small_art', 'other_game_eboot'}
 # The edition the port's direct mouse, native rendering, trophies and karma switcher are made for.
 TITLE_US = 'CUSA00223'
 # Art files the game opens at every start, the same in every edition and language (without them it
@@ -582,8 +653,16 @@ def check_game(game_dir):
     game = Path(game_dir)
     problems = []
     eboot = game / 'eboot.bin'
+    info = GAMES[_game]
     if not eboot.is_file():
         problems.append(('missing', 'eboot.bin'))
+    elif 'eboot' in info:   # First Light: its own code (1.04); no Second Son update or mods to check
+        try:
+            entry, size = _cached(eboot, 'layout', eboot_layout)
+            if (entry, size) != info['eboot']:
+                problems.append(('other_game_eboot', f'entry={entry:#x}, image={size:,} bytes'))
+        except (OSError, ValueError, KeyError, StopIteration) as error:
+            problems.append(('unreadable', f'eboot.bin ({error})'))
     else:
         try:
             entry, size = _cached(eboot, 'layout', eboot_layout)
@@ -596,10 +675,13 @@ def check_game(game_dir):
         except (OSError, ValueError, KeyError, StopIteration) as error:
             problems.append(('unreadable', f'eboot.bin ({error})'))
     title = game_title(game)
-    if title and title != TITLE_US and not eu_same_code(game, title):
+    if 'titles' in info:
+        if title and title not in info['titles']:
+            problems.append(('other_game_title', title))
+    elif title and title != TITLE_US and not eu_same_code(game, title):
         problems.append(('other_title', title))
     art = game / 'art'
-    missing_art = next((rel for rel in ART_REQUIRED if not (art / rel).is_file()), None)
+    missing_art = next((rel for rel in info.get('art_required', ART_REQUIRED) if not (art / rel).is_file()), None)
     if missing_art:
         problems.append(('no_art', f'art/{missing_art}'))
     else:
@@ -607,7 +689,7 @@ def check_game(game_dir):
             count = _cached(art, 'art_files', lambda path: sum(len(names) for _, _, names in os.walk(path)))
         except OSError:
             count = None
-        if count is not None and count < ART_MIN_FILES:
+        if count is not None and count < info.get('art_min', ART_MIN_FILES):
             problems.append(('small_art', f'{count:,}'))
     for module in MODULES:
         path = game / 'sce_module' / module
@@ -939,10 +1021,14 @@ def build_env(settings, extra=None):
         env['ISS_UI_LANG'] = settings['ui_language']
     env['ISS_CONFIG'] = str(user_dir() / 'tlg.ini')
     dlc = addons.labels(user_dir() / 'dlc')
+    # First Light asks for its "full game" entitlement at every start (an error screen without it);
+    # the port answers it offline, as for the player's own add-ons.
+    dlc = [*dlc, *(label for label in GAMES[_game].get('addcont', ()) if label not in dlc)]
     if dlc:
         env.setdefault('ISS_ADDCONT_LABELS', ','.join(dlc))
+        env.setdefault('TLG_ADDCONT_LABELS', env['ISS_ADDCONT_LABELS'])
     # Window name, app id (matches infamous-pc.desktop for Alt+Tab and the dock) and icon.
-    env.setdefault('ISS_APP_NAME', 'inFAMOUS Second Son')
+    env.setdefault('ISS_APP_NAME', GAMES[_game]['name'])
     env.setdefault('ISS_APP_ID', 'infamous-pc')
     icon = window_icon(settings)
     if icon:

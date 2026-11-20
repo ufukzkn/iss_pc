@@ -8,7 +8,9 @@ Rectangle {
     implicitWidth: 1120
     implicitHeight: 700
     property int current: 0
-    readonly property var pages: ["play", "graphics", "controls", "fixes", "saves", "guides", "support", "updates", "advanced", "mods"]
+    // The rail's order (Rail.qml entries): Play, Graphics, Mods, Controls, Controller guides,
+    // Saves & data, Updates, Support, Advanced, Fixes.
+    readonly property var pages: ["play", "graphics", "mods", "controls", "guides", "saves", "updates", "support", "advanced", "fixes"]
     property bool animate: true
 
     Rail {
@@ -50,7 +52,7 @@ Rectangle {
             }
         }
     }
-    Component { id: home; HomePage { animate: root.animate; onOpenFixes: root.current = 3; onOpenSaves: root.current = 4 } }
+    Component { id: home; HomePage { animate: root.animate; onOpenFixes: root.current = root.pages.indexOf("fixes"); onOpenSaves: root.current = root.pages.indexOf("saves") } }
     Component { id: graphics; GraphicsPage { } }
     Component { id: controls
         ControlsPage { guidesShown: root.pages.indexOf("guides") >= 0
