@@ -23,7 +23,7 @@ from presets_v2 import V2_PRESETS
 PRESET_SETTINGS = ('vsync',)
 PRESET_ITEMS = ('menu:fps_limit', 'menu:frames_queued', 'menu:fsr1', 'menu:rcas', 'menu:rcas_strength',
                 'TLG_BARRIER_MERGE', 'TLG_EXPLICIT_RANGE', 'TLG_BARRIER_SPLIT',
-                'TLG_ASYNC_SHADERS', 'TLG_STALE_READBACK', 'TLG_DEFERRED_READBACK', 'TLG_BACKGROUND_WARMUP')
+                'TLG_ASYNC_SHADERS', 'TLG_STALE_READBACK', 'TLG_DEFERRED_READBACK', 'TLG_BACKGROUND_WARMUP', 'TLG_LAZY_PROGRAMS')
 # Full presets (presets_current.py) also set keys the plain ones never touch (GPU accuracy, read-ahead,
 # write merge, draw distance...): those keys are applied, and compared, only for the preset that lists them.
 FULL_PRESETS = {p['id']: p for p in (REC1, CURRENT, AMD, RX580, SECO, *APOLAR_PRESETS, *V2_PRESETS)}
@@ -108,7 +108,7 @@ def matching_preset(settings, states):
 
 
 # --------------------------------------------------------------------------------- VRAM budget
-# The Tk launcher's rule ("6 GB card: 3500 · 8 GB: 5000 · 12 GB: 8500 · 16 GB: 12000 · 24 GB: 19000"),
+# The Tk launcher's rule ("6 GB card: 3500 Â· 8 GB: 5000 Â· 12 GB: 8500 Â· 16 GB: 12000 Â· 24 GB: 19000"),
 # in MB of VRAM to give the texture cache; in between the budget follows the line joining the points.
 BUDGET_POINTS = ((6, 3500), (8, 5000), (12, 8500), (16, 12000), (24, 19000))
 BUDGET_MIN, BUDGET_MAX = 2000, 24000      # the Tk spin box range

@@ -29,7 +29,7 @@ class ErrorKeyTests(unittest.TestCase):
         import re
         keys = set()
         for name in ('userdata.py', 'savemanager.py'):
-            keys |= set(re.findall(r"(?:SaveError|DataError)\('(\w+)'", (ROOT / 'launcher' / name).read_text()))
+            keys |= set(re.findall(r"(?:SaveError|DataError)\('(\w+)'", (ROOT / 'launcher' / name).read_text(encoding='utf-8')))
         self.assertGreater(len(keys), 10)
         for key in keys:
             self.assertIn('err_' + key, STRINGS, key)
@@ -172,7 +172,7 @@ class SavesControllerTests(unittest.TestCase):
         self.saves.reload()
         self.assertEqual('Auto', self.saves.slots[0]['kindText'])
         self.backend.setLang('pt_BR')
-        self.assertEqual('Automático', self.saves.slots[0]['kindText'])
+        self.assertEqual('AutomÃ¡tico', self.saves.slots[0]['kindText'])
 
     def test_backup_now_and_keep(self):
         put_slot(self.default, 'infamousssUser0')

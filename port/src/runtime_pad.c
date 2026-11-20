@@ -20,7 +20,6 @@
 #include <pthread.h>
 #include <time.h>
 #include <SDL3/SDL.h>
-#include "mouse_stick.h"
 #include "gyro_aim.h"
 #include "iss_mouse_aim.h"
 #include "iss_power_wheel.h"
@@ -704,7 +703,7 @@ static void sample_motion(PadData *d, const PadSnap *g, const bool *k) {
             motion.mode=!motion.mode;
             const char *lang=getenv("TLG_UI_LANG");
             const int pt=!(lang && !strncmp(lang,"en",2));
-            tlggpu_overlay_notice(motion.mode ? (pt ? "Modo sensor LIGADO (lata de spray): X sacode, R2 pinta, analógico esquerdo mira"
+            tlggpu_overlay_notice(motion.mode ? (pt ? "Modo sensor LIGADO (lata de spray): X sacode, R2 pinta, analÃ³gico esquerdo mira"
                                                     : "Sensor mode ON (spray can): cross shakes, R2 sprays, left stick aims")
                                               : (pt ? "Modo sensor desligado" : "Sensor mode off"), 3.0f);
             printf("Runtime: sensor mode %s\n",motion.mode ? "on" : "off");
@@ -935,7 +934,7 @@ static uint32_t sample_mouse(PadData *d, bool aiming_can, const bool *k) {
                 const int pt=!(lang && !strncmp(lang,"en",2));
                 tlggpu_overlay_notice(toggled ? (pt ? "Mouse: modo touchpad LIGADO (esquerdo toca, arrastar desliza, direito = dois dedos)"
                                                     : "Mouse: touchpad mode ON (left touches, drag swipes, right = two fingers)")
-                                              : (pt ? "Mouse: câmera" : "Mouse: camera"), 2.5f);
+                                              : (pt ? "Mouse: cÃ¢mera" : "Mouse: camera"), 2.5f);
             }
             pad_mode=toggled;
         } else pad_mode=key_down;
