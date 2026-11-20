@@ -5,6 +5,28 @@ import Launcher
 Item {
     id: page
     readonly property color accent: Theme.accents.mods
+    // Credits under a mod, clickable, in the Graphics page's preset style ("By {name} ↗").
+    // key: the mod's selection key (mods.json); text: a strings.json key with {name}.
+    readonly property var credits: ({
+        "iss_video_dash_endless.xml/Endless video dash":
+            { "text": "gfx_preset_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy" },
+        "iss_builtin_intro.xml/Skip intro movie":
+            { "text": "mods_fixed_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy",
+              "original": "junminlee2004" },
+        "iss_builtin_intro.xml/Disable motion blur":
+            { "text": "gfx_preset_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy" },
+        "native/camera-speed-1.5x":
+            { "text": "gfx_preset_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy" },
+        "iss_godmode.xml/God mode":
+            { "text": "mods_ported_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy",
+              "original": "Weysincha" },
+        "iss_infinite_energy.xml/Unlimited energy":
+            { "text": "mods_ported_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy",
+              "original": "Weysincha" },
+        "iss_infinite_energy.xml/Unlimited missiles":
+            { "text": "mods_ported_by", "name": "sunnyGeezy", "url": "https://github.com/sunnyGeezy",
+              "original": "Weysincha" }
+    })
 
     ListView {
         id: list
@@ -39,6 +61,7 @@ Item {
         }
         delegate: Item {
             id: row
+            property bool on: modelData.on === true   // flipped here at once; the list is not rebuilt
             width: list.width
             height: card.height + 8
             Rectangle {
@@ -54,18 +77,40 @@ Item {
                     Text { visible: !!modelData.note; width: parent.width; text: modelData.note || ""; wrapMode: Text.WordWrap
                            color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 13; lineHeight: 1.3
                            lineHeightMode: Text.ProportionalHeight }
+                    Row {
+                        id: creditRow
+                        readonly property var credit: page.credits[modelData.key] || null
+                        visible: credit !== null
+                        spacing: 6
+                        // The mod's original author (plain text, no link), before the fix credit.
+                        Text {
+                            visible: !!(creditRow.credit && creditRow.credit.original)
+                            text: visible ? Theme.tr("mods_original_by").replace("{name}", creditRow.credit.original) + "  ·" : ""
+                            color: Theme.textDim; font.family: Theme.fontText; font.pixelSize: 12; font.weight: Font.DemiBold
+                        }
+                        Text {
+                            text: creditRow.credit ? Theme.tr(creditRow.credit.text).replace("{name}", creditRow.credit.name) : ""
+                            color: Theme.ok; font.family: Theme.fontText; font.pixelSize: 12; font.weight: Font.DemiBold
+                            Accessible.role: Accessible.Button; Accessible.name: text
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                        onClicked: function(mouse) { mouse.accepted = true; Qt.openUrlExternally(creditRow.credit.url) } }
+                        }
+                    }
                 }
                 Toggle {
                     objectName: "modToggle_" + modelData.key
                     anchors.right: parent.right; anchors.rightMargin: 20; anchors.verticalCenter: parent.verticalCenter
                     accent: page.accent
-                    checked: modelData.on === true
-                    onToggled: (v) => Backend.setModEnabled(modelData.key, v)
+                    checked: row.on
+                    onToggled: (v) => { row.on = v; Backend.setModEnabled(modelData.key, v) }
                 }
             }
         }
+        // In the page's right margin, like the other tabs (inside the list it sat on the mods' switches).
         ScrollBar.vertical: ScrollBar {
             id: bar
+            parent: page
+            x: page.width - width - 12; y: list.y; height: list.height
             contentItem: Rectangle { implicitWidth: 6; radius: 3; color: bar.pressed ? Theme.ghostLineHover : Theme.ghostLine }
             background: Item { }
         }

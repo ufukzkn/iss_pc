@@ -508,10 +508,8 @@ extern "C" void tlggpu_input_settings(TlgGpuInputSettings* out) {
     const auto& s = TlgSettings::Get();
     out->mouse_enabled = s.mouse_enabled ? 1 : 0;
     out->invert_y = s.mouse_invert_y ? 1 : 0;
+    out->rumble = s.rumble ? 1 : 0;
     out->sensitivity = s.mouse_sensitivity;
-    out->smoothing = s.mouse_smoothing;
-    out->accel = s.mouse_accel;
-    out->deadzone = s.mouse_deadzone;
     std::snprintf(out->key_map, sizeof(out->key_map), "%s", s.key_map.c_str());
     out->gyro_aim = s.gyro_aim ? 1 : 0;
     out->gyro_invert_y = s.gyro_invert_y ? 1 : 0;
@@ -521,6 +519,7 @@ extern "C" void tlggpu_input_settings(TlgGpuInputSettings* out) {
     out->gyro_noise = s.gyro_noise;
     out->gyro_deadzone = s.gyro_deadzone;
     out->stick_look_sensitivity = s.stick_look_sensitivity;
+    std::snprintf(out->key_binds, sizeof(out->key_binds), "%s", TlgSettings::KeyBinds().c_str());
 }
 
 extern "C" void tlggpu_mouse_pad_hud(int active, float x, float y, int touching, int clicking) {

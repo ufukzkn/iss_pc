@@ -52,6 +52,7 @@ def error_text(error, t):
 # ------------------------------------------------------------------------------------ versions
 _VERSION_RE = re.compile(r'^v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9a-f]{4,40}))?(\+dirty)?$', re.IGNORECASE)
 _BETA_RE = re.compile(r'^beta-(?:fork-)?(\d{4})\.(\d{1,2})\.(\d{1,2})-([0-9a-f]{7,40})$', re.I)
+_SUNNY_RE = re.compile(r'^sunny-beta-(\d{4})\.(\d{2})\.(\d{2})$')
 _COMMIT_RE = re.compile(r'^([0-9a-f]{7,40})(\+dirty)?$', re.IGNORECASE)
 
 
@@ -59,6 +60,9 @@ def parse_version(text):
     """((year, month, day) or None, commit or '') of 'v2026.10.15-abc1234', 'v2026.10.15' or a bare
     commit hash (the "Build:" line of a log). None for anything else."""
     text = (text or '').strip()
+    sunny = _SUNNY_RE.fullmatch(text)
+    if sunny:
+        return tuple(map(int, sunny.groups())), ''
     m = _VERSION_RE.match(text) or _BETA_RE.match(text)
     if m:
         return (int(m.group(1)), int(m.group(2)), int(m.group(3))), (m.group(4) or '').lower()
@@ -215,7 +219,8 @@ def normalize_release(data, etag='', prefix=RELEASE_PREFIX, source='fork'):
             'url': page if page.startswith(prefix) else prefix + 'latest',    # only our own releases page opens
             'published': str(data.get('published_at') or '')[:10],
             'timestamp': str(data.get('published_at') or ''), 'assets': assets, 'etag': etag,
-            'beta': bool(data.get('prerelease')), 'source': source}
+            'beta': bool(data.get('prerelease')),
+            'source': 'sunny' if source == 'upstream' and _SUNNY_RE.fullmatch(tag) else source}
 
 
 UPSTREAM_API = 'https://api.github.com/repos/HayatoG/iss_pc/releases/'
@@ -254,7 +259,8 @@ def fetch_catalog(version='', opener=urllib.request.urlopen):
         official.extend(items)
         if len(items) < 30:
             break
-    betas = sorted((r for r in official if r['beta'] and r['tag'].startswith('beta-')),
+    betas = sorted((r for r in official if r['beta'] and
+                    (r['tag'].startswith('beta-') or _SUNNY_RE.fullmatch(r['tag']))),
                    key=lambda r: (r['timestamp'], r['tag']), reverse=True)[:10]
     stable_versions = [r for r in official if not r['beta']]
     for beta in betas:

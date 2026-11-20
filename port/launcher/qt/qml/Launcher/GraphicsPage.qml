@@ -121,6 +121,25 @@ Item {
                 }
             }
 
+            // ---- light glare (occlusion), moved here from the Play tab (2026-11-11) ----------------
+            SectionTitle { text: Theme.tr("occlusion"); accent: page.accent }
+            Rectangle {
+                width: parent.width; height: glareCol.implicitHeight + 36
+                radius: 14; color: Theme.card; border.width: 1; border.color: Theme.cardLine
+                Column {
+                    id: glareCol
+                    x: 18; y: 18; width: parent.width - 36; spacing: 10
+                    Select {
+                        accent: page.accent; width: Math.min(parent.width, 420)
+                        model: Backend.occlusionOptions
+                        currentIndex: Backend.occlusionIndex
+                        onActivated: (i) => Backend.setOcclusion(Backend.occlusionOptions[i].value)
+                    }
+                    Text { width: parent.width; text: Theme.tr("occlusion_hint"); wrapMode: Text.WordWrap; color: Theme.textDim
+                           font.family: Theme.fontText; font.pixelSize: 13; lineHeight: 1.35; lineHeightMode: Text.ProportionalHeight }
+                }
+            }
+
             // ---- shader cache ------------------------------------------------------------------
             SectionTitle { text: Theme.tr("gfx_sec_cache"); accent: page.accent }
             Rectangle {

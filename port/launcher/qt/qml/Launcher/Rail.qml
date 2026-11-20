@@ -9,12 +9,13 @@ Rectangle {
     width: Theme.railWidth
     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.railLine }
 
+    // Same order as Main.qml's pages (2026-11-11 order).
     readonly property var entries: [
         { key: "play", label: "nav_play" }, { key: "graphics", label: "nav_graphics" },
-        { key: "controls", label: "nav_controls" }, { key: "fixes", label: "nav_fixes" },
-        { key: "saves", label: "nav_saves" }, { key: "guides", label: "nav_guides" },
-        { key: "support", label: "nav_support" }, { key: "updates", label: "nav_updates" },
-        { key: "advanced", label: "nav_advanced" }, { key: "mods", label: "nav_mods" } ]
+        { key: "mods", label: "nav_mods" }, { key: "controls", label: "nav_controls" },
+        { key: "guides", label: "nav_guides" }, { key: "saves", label: "nav_saves" },
+        { key: "updates", label: "nav_updates" }, { key: "support", label: "nav_support" },
+        { key: "advanced", label: "nav_advanced" }, { key: "fixes", label: "nav_fixes" } ]
 
     Column {
         x: 16; y: 22; width: parent.width - 33; spacing: 3

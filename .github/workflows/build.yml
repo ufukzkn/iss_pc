@@ -162,6 +162,20 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  beta:
+    # A manual run with "beta" on a branch other than main: beta.yml builds, tests and publishes a
+    # pre-release of that branch (never Latest; posted only to the Discord beta channels, never
+    # #chat-geral). The jobs above stay skipped.
+    if: github.event_name == 'workflow_dispatch' && inputs.beta == true && github.ref != 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: ./.github/workflows/beta.yml
+    with:
+      branch: ${{ github.ref_name }}
+    # The beta channels' Discord webhooks (DISCORD_BETA_WEBHOOK, DISCORD_BETA_CHAT_WEBHOOK).
+    secrets: inherit
+
   release:
     needs: [linux, windows]
     # Only pushes publish (main -> vYYYY.MM.DD-<commit>, v* tags -> that tag); pull requests stop at the artifacts.

@@ -62,6 +62,15 @@ public:
         return physical_devices;
     }
 
+    /// The device was created with shaderStorageImageWriteWithoutFormat (FSR 3 needs it).
+    bool IsStorageImageWriteWithoutFormatEnabled() const {
+        return features.shaderStorageImageWriteWithoutFormat;
+    }
+
+    bool IsSubgroupSizeControlEnabled() const {
+        return vk13_features.subgroupSizeControl;
+    }
+
     /// Retrieve queue information
     u32 GetGraphicsQueueFamilyIndex() const {
         return queue_family_index;
@@ -96,6 +105,11 @@ public:
 
     vk::Queue GetComputeQueue() const {
         return compute_queue;
+    }
+
+    /// ISS_UPLOAD_QUEUE=1: a queue of the transfer-only family (copy engine), null otherwise.
+    vk::Queue GetUploadQueue() const {
+        return upload_queue;
     }
 
     TracyVkCtx GetProfilerContext() const {
@@ -558,6 +572,7 @@ private:
     vk::Queue readback_queue;
     bool has_readback_queue{};
     vk::Queue compute_queue;
+    vk::Queue upload_queue;
     bool has_compute_queue{};
     std::vector<vk::PhysicalDevice> physical_devices;
     std::vector<std::string> available_extensions;

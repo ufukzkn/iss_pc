@@ -7,6 +7,9 @@ ComboBox {
     property color accent: Theme.smoke
     implicitWidth: 220
     implicitHeight: 36
+    // The mouse wheel scrolls the page under it instead of changing the choice (scrolling past the
+    // Game list on the Play tab switched the game).
+    wheelEnabled: false
     textRole: "label"
     font.family: Theme.fontText
     font.pixelSize: 13

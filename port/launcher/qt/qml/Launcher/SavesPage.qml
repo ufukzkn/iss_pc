@@ -81,6 +81,44 @@ Item {
                 }
             }
 
+            // ---- DLC (add-ons) ---------------------------------------------------------------------
+            Rectangle {
+                width: parent.width; height: dlcCol.implicitHeight + 36
+                radius: 14; color: Theme.card; border.width: 1; border.color: Theme.cardLine
+                Column {
+                    id: dlcCol
+                    x: 18; y: 18; width: parent.width - 36; spacing: 10
+                    Row {
+                        spacing: 12
+                        Text { text: Theme.tr("dlc_title"); color: Theme.textMuted; font.family: Theme.fontDisplay
+                               font.variableAxes: ({ "wght": 700 }); font.pixelSize: 18; font.weight: Font.Bold
+                               font.capitalization: Font.AllUppercase; font.letterSpacing: 0.9; anchors.verticalCenter: parent.verticalCenter }
+                        Tag { text: Theme.tr("dlc_count").replace("{n}", Saves.dlcItems.length)
+                              tone: Saves.dlcItems.length > 0 ? "good" : "warn"; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    Text { width: parent.width; text: Theme.tr("dlc_intro"); wrapMode: Text.WordWrap; color: Theme.textDim
+                           font.family: Theme.fontText; font.pixelSize: 13; lineHeight: 1.35; lineHeightMode: Text.ProportionalHeight }
+                    Text { width: parent.width; text: Saves.dlcDir; color: "#fff"; wrapMode: Text.WrapAnywhere
+                           font.family: Theme.fontText; font.pixelSize: 15; font.weight: Font.DemiBold }
+                    Repeater {
+                        model: Saves.dlcItems
+                        Row {
+                            spacing: 10
+                            Rectangle { width: 8; height: 8; radius: 4; color: Theme.ok; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: modelData.label; color: "#fff"; font.family: Theme.fontText; font.pixelSize: 14; font.weight: Font.DemiBold
+                                   anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "· " + modelData.source; color: Theme.textFaint; font.family: Theme.fontText; font.pixelSize: 12
+                                   elide: Text.ElideMiddle; width: Math.min(implicitWidth, dlcCol.width - 260); anchors.verticalCenter: parent.verticalCenter }
+                        }
+                    }
+                    Flow {
+                        width: parent.width; spacing: 10
+                        GhostButton { compact: true; tone: "primary"; text: Theme.tr("dlc_open"); onClicked: Saves.openDlcFolder() }
+                        GhostButton { compact: true; text: Theme.tr("dlc_rescan"); onClicked: Saves.rescanDlc() }
+                    }
+                }
+            }
+
             // ---- saves found elsewhere -----------------------------------------------------------
             Repeater {
                 model: Saves.found

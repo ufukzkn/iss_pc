@@ -49,7 +49,7 @@ O launcher tem 10 telas, incluindo **Mods / Cheats** e **Avançado**. O launcher
 No Linux, `./install_desktop.sh` adiciona o jogo ao menu de aplicativos.
 
 ### Durante o jogo
-- **F10**: contador de FPS · **Insert** (ou R3 + L2): menu do port
+- **F10**: contador de FPS · **F1** (ou R3 + L2): menu do port
 - Controles de PS4/PS5, Xbox e 8BitDo via SDL3, por USB ou Bluetooth.
 
 ### Sensor de movimento e touchpad
@@ -57,7 +57,7 @@ Para o grafite, absorver poderes (fumaça, neon...), abrir portas e outras cenas
 - **Modo sensor:** um toque em **L3+R3** juntos liga, outro toque desliga (ou Share no Xbox Series, Capture no Switch Pro, microfone no DualSense). Ligado, ele é a lata de spray do grafite: o controle fica **de lado**, **X/A sacode**, **R2 pinta** e o **analógico esquerdo mira** (o cursor do grafite); o Delsin não anda nem pula, então desligue depois da cena. Um aviso na tela mostra o estado.
 - **Touchpad:** **View/Select** clica (segurar = segurar o touchpad, para absorver poderes); **segure View/Select + analógico direito** para deslizar (porta "Open Door", scanner de mão); **View/Select + R1** aperta as duas pontas (levantar o carro de cima do Reggie).
 - **Mouse:** mover gira a câmera; esquerdo = R2, direito = L2, do meio = R3; **Esc** solta o mouse e um clique prende de novo. **Segure Ctrl esquerdo (ou o botão lateral X1)** para usar o mouse como touchpad: esquerdo toca/clica (segurar = absorver poder), esquerdo + arrastar desliza ("Open Door", scanner), direito = dois dedos (carro do Reggie). `ISS_MOUSE=0` desliga.
-- **Teclado:** **T/G** viram o controle de lado (enquanto seguram, as **setas** miram), **Y** sacode, **F** é o R2 (pintar); **Tab/Backspace** clicam o touchpad, **Tab + setas** deslizam, **Tab + Backspace** apertam as duas pontas.
+- **Teclado:** **T/G** viram o controle de lado (enquanto seguram, as **setas** ou o **mouse** miram), **Y** ou **balançar o mouse rápido para os lados** (ou girar a rodinha) sacode, **F** ou o botão esquerdo é o R2 (pintar); **Tab/Backspace** clicam o touchpad, **Tab + setas** deslizam, **Tab + Backspace** apertam as duas pontas.
 - **Launcher:** "Zona morta dos analógicos" (padrão 10%), se algo se mexer sozinho. A tela **Guias de controle** tem imagens Xbox, Switch Pro e 8BitDo desse passo a passo, para salvar ou copiar.
 - O mouse é novo e foi pouco testado em jogo: se der problema, `ISS_MOUSE=0` o desliga.
 
@@ -111,7 +111,7 @@ The launcher has 10 screens, including **Mods / Cheats** and **Advanced**. The o
 On Linux, `./install_desktop.sh` adds the game to the applications menu.
 
 ### While playing
-- **F10**: FPS counter · **Insert** (or R3 + L2): the port's menu
+- **F10**: FPS counter · **F1** (or R3 + L2): the port's menu
 - PS4/PS5, Xbox and 8BitDo controllers via SDL3, over USB or Bluetooth.
 
 ### Motion sensor and touchpad
@@ -119,7 +119,7 @@ For the graffiti, absorbing powers (smoke, neon...), opening doors and other sen
 - **Sensor mode:** one tap on **L3+R3** together turns it on, another turns it off (or Share on an Xbox Series, Capture on a Switch Pro, the microphone button on a DualSense). While on, it is the graffiti's spray can: the controller is **on its side**, **cross/A shakes**, **R2 sprays** and the **left stick aims** (the graffiti cursor); Delsin neither walks nor jumps, so turn it off after the scene. A notice on screen shows the state.
 - **Touchpad:** **View/Select** clicks (hold = hold the touchpad, to absorb powers); **hold View/Select + right stick** to swipe ("Open Door", hand scanner); **View/Select + R1** presses both ends (lifting the car off Reggie).
 - **Mouse:** moving turns the camera; left = R2, right = L2, middle = R3; **Esc** releases the mouse and a click captures it again. **Hold Left Ctrl (or the X1 side button)** to use the mouse as the touchpad: left touches/clicks (hold = absorb a power), left + drag swipes ("Open Door", scanner), right = two fingers (Reggie's car). `ISS_MOUSE=0` turns it off.
-- **Keyboard:** **T/G** turn the controller sideways (while held, the **arrow keys** aim), **Y** shakes, **F** is R2 (spray); **Tab/Backspace** click the touchpad, **Tab + arrow keys** swipe, **Tab + Backspace** press both ends.
+- **Keyboard:** **T/G** turn the controller sideways (while held, the **arrow keys** or the **mouse** aim), **Y** or a **quick side-to-side wiggle of the mouse** (or spinning the wheel) shakes, **F** or the left button is R2 (spray); **Tab/Backspace** click the touchpad, **Tab + arrow keys** swipe, **Tab + Backspace** press both ends.
 - **Launcher:** "Stick dead zone" (default 10%), if something moves on its own. The **Controller guides** screen has Xbox, Switch Pro and 8BitDo images of these steps, to save or copy.
 - The mouse is new and has not been tested much in game: if it misbehaves, `ISS_MOUSE=0` turns it off.
 

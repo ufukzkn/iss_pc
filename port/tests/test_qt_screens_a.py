@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / 'launcher'))
 from qt import logic  # noqa: E402
 from qt import gfxlogic  # noqa: E402
 import backports_table  # noqa: E402
+import native_resolution  # noqa: E402
 import padsettings  # noqa: E402
 
 try:
@@ -52,7 +53,7 @@ class KeyboardTableTests(unittest.TestCase):
     def test_fixed_keys_exist_in_runtime_pad_c(self):
         text = RUNTIME_PAD.read_text(encoding='utf-8')
         for scancode in ('W', 'A', 'S', 'D', 'LEFT', 'RIGHT', 'UP', 'DOWN', 'T', 'G', 'Y'):
-            self.assertIn(f'SDL_SCANCODE_{scancode}]', text, scancode)
+            self.assertIn(f'SDL_SCANCODE_{scancode}', text, scancode)
 
     def test_ps4_button_names_are_the_ones_apply_button_map_reads(self):
         text = RUNTIME_PAD.read_text(encoding='utf-8')
@@ -116,11 +117,16 @@ class KeyMapTests(unittest.TestCase):
 
 
 class MouseAndEnvironmentTests(unittest.TestCase):
+    def test_deleted_mouse_emulation_keys_cannot_be_reactivated(self):
+        for key in ('mouse_smoothing', 'mouse_accel', 'mouse_deadzone'):
+            with self.assertRaises(KeyError):
+                padsettings.mouse_update(key, 0.5)
+
     def test_mouse_defaults_and_clamping(self):
         self.assertTrue(padsettings.mouse_value({}, 'mouse_enabled'))
         self.assertEqual(1.0, padsettings.mouse_value({}, 'mouse_sensitivity'))
         self.assertEqual(10.0, padsettings.mouse_value({'mouse_sensitivity': '99'}, 'mouse_sensitivity'))
-        self.assertEqual(0.5, padsettings.mouse_value({'mouse_smoothing': 'abc'}, 'mouse_smoothing'))
+        self.assertEqual(1.0, padsettings.mouse_value({'mouse_sensitivity': 'abc'}, 'mouse_sensitivity'))
         self.assertFalse(padsettings.mouse_value({'mouse_enabled': '0'}, 'mouse_enabled'))
 
     def test_update_removes_the_key_at_its_default(self):
@@ -128,7 +134,7 @@ class MouseAndEnvironmentTests(unittest.TestCase):
         self.assertEqual({'mouse_sensitivity': '1.50'}, padsettings.mouse_update('mouse_sensitivity', 1.5))
         self.assertEqual({'mouse_enabled': '0'}, padsettings.mouse_update('mouse_enabled', False))
         self.assertEqual({'mouse_enabled': None}, padsettings.mouse_update('mouse_enabled', True))
-        self.assertEqual({'mouse_deadzone': '0.50'}, padsettings.mouse_update('mouse_deadzone', 7))
+        self.assertEqual({'mouse_sensitivity': '10.00'}, padsettings.mouse_update('mouse_sensitivity', 70))
 
     def test_nothing_is_exported_by_default(self):
         self.assertEqual({}, padsettings.environment({}))
@@ -451,10 +457,10 @@ class ControllerTests(unittest.TestCase):
     # -- Graphics --------------------------------------------------------------------------------------
     def test_rows_cover_the_launcher_video_box_and_the_menu_tabs(self):
         ids = [r['id'] for r in self.graphics.model.rows if r['kind'] == 'item']
-        for rid in ('s:display_mode', 's:vsync', 's:show_fps', 's:gpu_readbacks', 's:eager_readback',
+        for rid in ('s:display_mode', 's:vsync', 's:gpu_readbacks', 's:eager_readback',
                     's:write_merge', 's:vram_budget_mb', 'menu:fsr1', 'menu:rcas', 'menu:rcas_strength',
                     'menu:fps_limit', 'menu:frames_queued', 'TLG_ASYNC_SHADERS', 'TLG_DEFERRED_READBACK',
-                    'TLG_STALE_READBACK', 'TLG_BACKGROUND_WARMUP', 'TLG_BARRIER_MERGE', 'menu:overlay_corner'):
+                    'TLG_STALE_READBACK', 'TLG_BACKGROUND_WARMUP', 'TLG_BARRIER_MERGE'):
             self.assertIn(rid, ids)
         self.assertEqual(len(ids), len(set(ids)))
         for row in self.graphics.model.rows:
@@ -474,18 +480,18 @@ class ControllerTests(unittest.TestCase):
             os.environ.pop('ISS_LAZY_PROGRAMS', None)
             os.environ.pop('TLG_LAZY_PROGRAMS', None)
             row = self.graphics.model.get(item_id)
-            self.assertTrue(row['on'])
+            self.assertFalse(row['on'])
             self.assertEqual('restarts the game', row['tags'][0]['text'])
-            self.graphics.setValue(item_id, '0')
-            self.assertIn('lazy_programs=0', self.ini_text())
-            self.assertEqual('0', logic.tlg_run.build_env(self.backend.settings)['ISS_LAZY_PROGRAMS'])
-            self.assertEqual('0', logic.tlg_run.experimental_states(self.backend.settings)[item_id])
+            self.graphics.setValue(item_id, '1')
+            self.assertIn('lazy_programs=1', self.ini_text())
+            self.assertEqual('1', logic.tlg_run.build_env(self.backend.settings)['ISS_LAZY_PROGRAMS'])
+            self.assertEqual('1', logic.tlg_run.experimental_states(self.backend.settings)[item_id])
             self.graphics.applyPreset('balanced')
             self.assertFalse(self.graphics.model.get(item_id)['on'])
-            self.graphics.setValue(item_id, '1')
+            self.graphics.setValue(item_id, '0')
             self.assertNotIn('lazy_programs=', self.ini_text())
             self.assertNotIn('ISS_LAZY_PROGRAMS', logic.tlg_run.build_env(self.backend.settings))
-            self.assertTrue(self.graphics.model.get(item_id)['on'])
+            self.assertFalse(self.graphics.model.get(item_id)['on'])
 
     def test_settings_json_rows_write_the_same_keys_as_the_tk_launcher(self):
         self.graphics.setValue('s:display_mode', 'Borderless')
@@ -510,6 +516,23 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn('fps_limit', self.ini_text())
         row = self.graphics.model.get('menu:fps_limit')
         self.assertEqual('0', row['options'][row['index']]['value'])
+
+    def test_output_and_internal_resolution_write_the_game_keys(self):
+        self.assertEqual(['n:output', 'n:internal'], [r['id'] for r in self.graphics.model.rows[1:3]])
+        self.assertTrue(self.graphics.model.get('n:output')['disabled'])          # not renderer v2 here
+        self.assertIn('renderer v2', self.graphics.model.get('n:output')['note'])
+        with mock.patch.object(self.graphics, '_renderer_v2', return_value=True):
+            self.graphics.setValue('n:output', '2')
+            self.graphics.setValue('n:internal', '720')
+            self.assertIn('iss_native_output=2', self.ini_text())
+            self.assertIn('iss_native_percent=50', self.ini_text())
+            self.assertIn('1280', self.graphics.model.get('n:internal')['info'])
+            self.graphics.setValue('n:output', '1')               # 720p stays 720p on 1080p: 67%
+            self.assertIn('iss_native_percent=67', self.ini_text())
+            self.assertIn('Not exact', self.graphics.model.get('n:internal')['note'])
+            self.graphics.setValue('n:output', '5')
+            self.graphics.setValue('n:internal', '2160')         # over the pixel budget: refused, unchanged
+            self.assertEqual(50, native_resolution.read(logic.tlg_run.read_ini(self.ini))[1])
 
     def test_a_row_changed_on_the_fixes_screen_shows_here(self):
         self.backend.setFix('TLG_STALE_READBACK', '1')
@@ -676,6 +699,15 @@ class ControllerTests(unittest.TestCase):
         self.assertIn('sensor_aim=150', self.ini_text())
         self.assertEqual(150, self.controls.pad_model.get('menu:sensor_aim')['value'])
 
+    def test_rumble_switch_is_the_tlg_ini_key_the_menu_shares(self):
+        self.assertTrue(self.controls.pad_model.get('i:rumble')['on'])
+        self.controls.setValue('i:rumble', '0')
+        self.assertIn('rumble=0', self.ini_text())
+        self.assertFalse(self.controls.pad_model.get('i:rumble')['on'])
+        self.controls.setValue('i:rumble', '1')
+        self.assertNotIn('rumble=', self.ini_text())     # the default again
+        self.assertTrue(self.controls.pad_model.get('i:rumble')['on'])
+
     def test_mouse_keys_go_to_tlg_ini_and_defaults_remove_them(self):
         self.controls.setValue('m:mouse_sensitivity', '1.5')
         self.controls.setValue('m:mouse_invert_y', '1')
@@ -718,8 +750,8 @@ class ControllerTests(unittest.TestCase):
     def test_the_other_keys_of_tlg_ini_survive(self):
         self.ini.parent.mkdir(parents=True)
         self.ini.write_text('# tlg settings\nbp01=0\nfps_limit=60\n')
-        self.controls.setValue('m:mouse_accel', '0.5')
-        self.assertEqual({'bp01', 'fps_limit', 'mouse_accel'},
+        self.controls.setValue('m:mouse_sensitivity', '1.5')
+        self.assertEqual({'bp01', 'fps_limit', 'mouse_sensitivity'},
                          {l.split('=')[0] for l in self.ini_text().splitlines() if '=' in l})
 
     def test_turning_the_mouse_off_writes_mouse_enabled_0_and_dims_the_rows(self):

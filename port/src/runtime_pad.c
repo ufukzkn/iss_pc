@@ -7,7 +7,7 @@
  *   Enter Options, Tab left touchpad (photo mode), Backspace right touchpad (pause menu),
  *   IJKL d-pad (I up, K down, J left, L right).
  * Mouse (while the window has it, see tlggpu_mouse_take; Esc releases it, a click takes it back):
- *   motion turns the camera (right stick, src/mouse_stick.h), left button R2 (use the power),
+ *   motion turns the camera through the direct native aim hook, left button R2 (use the power),
  *   right button L2 (aim), middle button R3. X1/X2 and the wheel are free for TLG_KEY_MAP
  *   ("Mouse X1", "Wheel Up", ...). */
 #define _GNU_SOURCE
@@ -22,7 +22,14 @@
 #include <SDL3/SDL.h>
 #include "mouse_stick.h"
 #include "gyro_aim.h"
+#include "iss_mouse_aim.h"
+#include "iss_power_wheel.h"
+#include "power_wheel_input.h"
 #include "mouse_touch.h"
+#include "rumble_gate.h"
+#include "dualsense_speaker.h"
+#include "controller_ds4_speaker.h"
+#include "mouse_shake.h"
 #include <sys/stat.h>
 
 #define ERR_INVALID_ARG ((int32_t)0x80920001)
@@ -38,6 +45,11 @@ enum {
     /* Host-only sources, never shown to the game: a click on one side of the touchpad from a
      * button or key without a touch surface (play_click turns them into a touch and a click). */
     CLICK_LEFT=0x40000000, CLICK_RIGHT=0x80000000,
+    /* Host-only too: keyboard/mouse stick directions (2026-11-06, rebindable like the buttons; the
+     * in-game Keyboard & mouse bindings window). Turned into stick positions, never shown as buttons. */
+    LS_UP=0x200000, LS_DOWN=0x400000, LS_LEFT=0x800000, LS_RIGHT=0x1000000,
+    RS_UP=0x2000000, RS_DOWN=0x4000000, RS_LEFT=0x8000000, RS_RIGHT=0x10000000,
+    STICK_KEYS=LS_UP|LS_DOWN|LS_LEFT|LS_RIGHT|RS_UP|RS_DOWN|RS_LEFT|RS_RIGHT,
 };
 typedef struct { uint16_t x, y; uint8_t id, reserve[3]; } PadTouch;
 typedef struct {
@@ -71,6 +83,7 @@ static int initialized, opened, sdl_ready;
 static SDL_Gamepad *gamepad;
 static size_t reads;
 static uint8_t connected_count;
+static int pad_thread=-1; /* 1: the pad thread reads the controller (see PadSnap), 0: the caller */
 
 static uint64_t now_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (uint64_t)t.tv_sec*1000000u+(uint64_t)t.tv_nsec/1000u; }
 /* TLG_STICK_DEADZONE (0..0.5, default 0.10): stick values inside it read as centered, the rest
@@ -80,13 +93,17 @@ static float stick_deadzone(void) {
     if (zone<0) { const char *e=getenv("TLG_STICK_DEADZONE"); zone=e && *e ? (float)atof(e) : 0.10f; if (zone<0) zone=0; if (zone>0.5f) zone=0.5f; }
     return zone;
 }
-static uint8_t axis(int16_t v) {
-    float f=(float)v/32767.f, zone=stick_deadzone();
-    if (f>1) f=1;
-    if (f<-1) f=-1;
-    f=fabsf(f)<=zone ? 0.f : (f>0 ? f-zone : f+zone)/(1.f-zone);
+static uint8_t stick_byte(float f) {
     int x=(int)lroundf(f*127.5f+127.5f);
     return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x);
+}
+/* A stick through one round dead zone, the rest rescaled toward the edge: a zone per axis snaps
+ * slow diagonal moves onto the axes (from the Steam Controller patch in #639). */
+static void stick(int16_t vx, int16_t vy, uint8_t *x, uint8_t *y) {
+    const float fx=fminf(fmaxf((float)vx/32767.f,-1.f),1.f), fy=fminf(fmaxf((float)vy/32767.f,-1.f),1.f);
+    const float m=hypotf(fx,fy), zone=stick_deadzone();
+    const float s=m<=zone ? 0.f : fminf((m-zone)/(1.f-zone),1.f)/m;
+    *x=stick_byte(fx*s); *y=stick_byte(fy*s);
 }
 static uint8_t trigger(int16_t v) { int x=v>>7; return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x); }
 /* Gain after the dead zone: neutral remains exactly neutral and the default is byte-identical.
@@ -129,7 +146,7 @@ static void play_click(PadData *d) {
     else if (click.released>up) up=click.released;
     if (now>=up && now-up>=CLICK_TAIL_US) { click.side=-1; return; }
     if (d->touch_count<2) {
-        d->touches[d->touch_count]=(PadTouch){.x=click.side ? 1440 : 480,.y=471,.id=d->touch_count};
+        d->touches[d->touch_count]=(PadTouch){.x=click.side ? 1440 : 480,.y=471,.id=(uint8_t)(16+click.side)};
         ++d->touch_count;
     }
     if (now>=down && now<up) d->buttons|=BTN_TOUCHPAD;
@@ -156,6 +173,29 @@ static int play_two_finger(PadData *d) {
     return 1;
 }
 
+/* Touch IDs and the held time as a DualShock 4 reports them (shadPS4 input/controller.cpp): each
+ * new finger takes the next ID (1..127, wrapping) and keeps it while it stays down; the held time
+ * counts microseconds since the first finger of a touch went down. Each source keys its fingers
+ * with ids of its own (the pad's fingers, the played click, the mouse...); here they become IDs. */
+static struct { int count; uint8_t key[2], id[2], next; uint64_t since; } contacts={0,{0,0},{0,0},1,0};
+static void number_touches(PadData *d) {
+    uint8_t key[2]={0,0}, id[2]={0,0};
+    int taken=0;
+    for (int i=0;i<d->touch_count;++i) {
+        key[i]=d->touches[i].id;
+        int j=0;
+        while (j<contacts.count && (contacts.key[j]!=key[i] || (taken>>j & 1))) ++j;
+        if (j<contacts.count) { taken|=1<<j; id[i]=contacts.id[j]; }
+        else { id[i]=contacts.next; contacts.next=contacts.next==127 ? 1 : (uint8_t)(contacts.next+1); }
+        d->touches[i].id=id[i];
+    }
+    if (d->touch_count && !contacts.count) contacts.since=d->timestamp;
+    d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-contacts.since) : 0;
+    contacts.count=d->touch_count;
+    memcpy(contacts.key,key,2);
+    memcpy(contacts.id,id,2);
+}
+
 /* Opens the first gamepad SDL knows about; called under lock. */
 /* Every connected controller is open; the game reads the one used last (a press or a stick
  * past half way), so a second controller lying on the desk never takes over. */
@@ -177,7 +217,8 @@ static SDL_Gamepad *current_gamepad(void) {
             SDL_CloseGamepad(gamepads[i]); gamepads[i]=NULL;
         }
     const uint64_t now=now_us();
-    if (now-last_scan>1000000 || !gamepad) {
+    /* Without a controller the pad thread looks every 50 ms (it samples every millisecond). */
+    if (now-last_scan>1000000 || (!gamepad && (pad_thread!=1 || now-last_scan>=50000))) {
         last_scan=now;
         int count=0;
         SDL_JoystickID *ids=SDL_GetGamepads(&count);
@@ -220,6 +261,9 @@ static const struct { const char *name; uint32_t ps; } ps_names[]={
     {"l1",BTN_L1}, {"r1",BTN_R1}, {"l2",BTN_L2}, {"r2",BTN_R2}, {"l3",BTN_L3}, {"r3",BTN_R3},
     {"options",BTN_OPTIONS}, {"touchpad",CLICK_LEFT}, {"touchpad_left",CLICK_LEFT}, {"touchpad_right",CLICK_RIGHT},
     {"up",BTN_UP}, {"down",BTN_DOWN}, {"left",BTN_LEFT}, {"right",BTN_RIGHT},
+    /* Keyboard map only: the stick directions (left stick moves, right stick turns the camera). */
+    {"ls_up",LS_UP}, {"ls_down",LS_DOWN}, {"ls_left",LS_LEFT}, {"ls_right",LS_RIGHT},
+    {"rs_up",RS_UP}, {"rs_down",RS_DOWN}, {"rs_left",RS_LEFT}, {"rs_right",RS_RIGHT},
 };
 /* Mouse sources in the keyboard map: MOUSE_SOURCE + bit of TlgGpuMouse (SDL button - 1), then
  * the wheel directions (pulses, see sample_mouse). */
@@ -249,7 +293,9 @@ static ButtonMap key_map={{
     {SDL_SCANCODE_RETURN,BTN_OPTIONS}, {SDL_SCANCODE_TAB,CLICK_LEFT}, {SDL_SCANCODE_BACKSPACE,CLICK_RIGHT},
     {SDL_SCANCODE_I,BTN_UP}, {SDL_SCANCODE_K,BTN_DOWN}, {SDL_SCANCODE_J,BTN_LEFT}, {SDL_SCANCODE_L,BTN_RIGHT},
     {MOUSE_LEFT,BTN_R2}, {MOUSE_RIGHT,BTN_L2}, {MOUSE_MIDDLE,BTN_R3},
-},20};
+    {SDL_SCANCODE_W,LS_UP}, {SDL_SCANCODE_S,LS_DOWN}, {SDL_SCANCODE_A,LS_LEFT}, {SDL_SCANCODE_D,LS_RIGHT},
+    {SDL_SCANCODE_UP,RS_UP}, {SDL_SCANCODE_DOWN,RS_DOWN}, {SDL_SCANCODE_LEFT,RS_LEFT}, {SDL_SCANCODE_RIGHT,RS_RIGHT},
+},28};
 
 static char *trim(char *text) {
     while (*text==' ' || *text=='\t') ++text;
@@ -314,6 +360,11 @@ static int apply_button_map(ButtonMap *map, const char *spec, bool keyboard) {
     return used;
 }
 
+/* The keyboard map without the in-game bindings (defaults + TLG_KEY_MAP or tlg.ini key_map), and the
+ * lock that lets the in-game Keyboard & mouse bindings window replace key_map while the pad thread
+ * samples it (2026-11-06). */
+static ButtonMap key_map_base;
+static pthread_mutex_t key_map_lock=PTHREAD_MUTEX_INITIALIZER;
 static void load_button_maps(void) {
     static bool loaded;
     if (loaded) return;
@@ -323,8 +374,55 @@ static void load_button_maps(void) {
     const char *env=getenv("TLG_KEY_MAP");
     TlgGpuInputSettings in;
     tlggpu_input_settings(&in);
+    pthread_mutex_lock(&key_map_lock);
     const int keys=apply_button_map(&key_map,env && *env ? env : in.key_map,true);
-    if (pad || keys) printf("Runtime: pad map: %d gamepad and %d keyboard buttons remapped\n",pad,keys);
+    key_map_base=key_map;
+    /* The in-game bindings (tlg.ini key_binds) come last, so what was chosen in the game wins. */
+    const int binds=apply_button_map(&key_map,in.key_binds,true);
+    pthread_mutex_unlock(&key_map_lock);
+    if (pad || keys || binds) printf("Runtime: pad map: %d gamepad and %d keyboard buttons remapped, %d in-game bindings\n",pad,keys,binds);
+}
+/* In-game bindings window: replaces the in-game bindings at once (same syntax as TLG_KEY_MAP, only
+ * the controls that differ from the base map). Returns how many entries were used. */
+int runtime_pad_set_key_binds(const char *spec) {
+    load_button_maps();
+    pthread_mutex_lock(&key_map_lock);
+    ButtonMap next=key_map_base;
+    const int used=apply_button_map(&next,spec,true);
+    key_map=next;
+    pthread_mutex_unlock(&key_map_lock);
+    printf("Runtime: keyboard and mouse bindings updated in game (%d changed from the defaults)\n",used);
+    return used;
+}
+/* Name of a keyboard-map source as the bindings window shows it (and as TLG_KEY_MAP accepts it). */
+static const char *source_name(int source) {
+    for (size_t i=0;i<sizeof(mouse_names)/sizeof(*mouse_names);++i) if (mouse_names[i].source==source) return mouse_names[i].name;
+    if (source>0 && source<SDL_SCANCODE_COUNT) { const char *n=SDL_GetScancodeName((SDL_Scancode)source); if (n && *n) return n; }
+    return NULL;
+}
+/* What a control (a ps_names name: "cross", "ls_up"...) is bound to: the names joined with '|' into
+ * out ("" when none). which: 0 now, 1 its default (the base map). Returns the number of sources, -1 if
+ * the control is unknown. */
+int runtime_pad_key_binding(const char *control, int which, char *out, size_t size) {
+    if (!out || !size) return -1;
+    *out=0;
+    uint32_t ps=0;
+    for (size_t i=0;i<sizeof(ps_names)/sizeof(*ps_names);++i) if (control && !SDL_strcasecmp(control,ps_names[i].name)) ps=ps_names[i].ps;
+    if (!ps) return -1;
+    load_button_maps();
+    pthread_mutex_lock(&key_map_lock);
+    const ButtonMap map=which ? key_map_base : key_map;
+    pthread_mutex_unlock(&key_map_lock);
+    int count=0;size_t used=0;
+    for (size_t i=0;i<map.count;++i) {
+        if (map.entries[i].ps!=ps) continue;
+        const char *name=source_name(map.entries[i].source);
+        if (!name) continue;
+        const int n=snprintf(out+used,size-used,"%s%s",count ? "|" : "",name);
+        if (n<0 || (size_t)n>=size-used) break;
+        used+=(size_t)n;++count;
+    }
+    return count;
 }
 
 /* Motion (orientation quaternion, acceleration in g, angular velocity in rad/s; axes as SDL's:
@@ -333,7 +431,8 @@ static void load_button_maps(void) {
  * leans on gravity. Without sensors the tilt is simulated, so motion prompts can be passed with
  * any controller or the keyboard:
  *   keyboard: T / G hold the controller turned sideways (to one side / the other) and, while held,
- *   the arrow keys point it (the graffiti cursor), Y shakes it, F sprays (R2);
+ *   the arrow keys or the mouse point it (the graffiti cursor), Y or a quick wiggle of the mouse
+ *   (or spinning the wheel, see mouse_shake.h) shakes it, F or the left button sprays (R2);
  *   gamepad: "sensor mode", toggled by a tap on TLG_MOTION_BUTTON (default "misc1": Share/Capture;
  *   any SDL button name) or on L3+R3 together. Sensor mode is the spray can of the graffiti (the
  *   only scene that asks for motion; the others use the touchpad): the controller is held on its
@@ -344,8 +443,10 @@ static void load_button_maps(void) {
  *   A notice on screen tells the mode; leaving it puts the controller upright again.
  * TLG_MOTION=off disables real sensors (simulation still works). */
 static int injected_motion; /* TLG_PAD_FILE tokens: 1 tilt_right (T), 2 tilt_left (G), 4 shake (Y) */
+static int mouse_shaking;   /* sample_mouse: the mouse is wiggled while the can is held (mouse_shake.h) */
 typedef struct { float w, x, y, z; } Quat;
-static struct { Quat q; float roll, pitch, yaw, aim_pitch; uint64_t last_us; int sensors, warned, mode, toggle_held; } motion={{1,0,0,0},0,0,0,0,0,-1,0,0,0};
+/* ref: the real sensors' reference orientation, set by scePadResetOrientation (reset). */
+static struct { Quat q, ref; float roll, pitch, yaw, aim_pitch, gravity[3]; uint64_t last_us; int sensors, warned, mode, toggle_held, boosting, reset; } motion={{1,0,0,0},{1,0,0,0},0,0,0,0,{0,0,0},0,-1,0,0,0,0,0};
 static Quat quat_mul(Quat a, Quat b) {
     return (Quat){a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z, a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,
                   a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x, a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w};
@@ -359,6 +460,23 @@ static void gravity_of(Quat q, float out[3]) {
     Quat c={q.w,-q.x,-q.y,-q.z}, v={0,0,1,0};
     Quat r=quat_mul(quat_mul(c,v),q);
     out[0]=r.x; out[1]=r.y; out[2]=r.z;
+}
+/* Valve's controllers (Steam Controller, Steam Deck) measure only +-2 g, a DualShock 4 +-4 g: a
+ * shake clips at 2 g and the game never sees it (the graffiti's spray can). The part beyond
+ * gravity (the average over ~0.3 s) is scaled by the gain, within +-4 g; held still the controller
+ * reads as before. dt 0 restarts the average. Idea from Castlesea's port (pad_accel_gain). */
+static void accel_boost(float a[3], float gravity[3], float gain, float dt) {
+    const float k=dt>0 && dt<0.3f ? dt/0.3f : 1.f;
+    for (int i=0;i<3;++i) {
+        gravity[i]=k<1.f ? gravity[i]+(a[i]-gravity[i])*k : a[i];
+        a[i]=fminf(fmaxf(gravity[i]+gain*(a[i]-gravity[i]),-4.f),4.f);
+    }
+}
+/* TLG_PAD_ACCEL_GAIN sets it for any controller (1: as measured); default 2 on Valve's, 1 else. */
+static float accel_gain(uint16_t vendor) {
+    static float env=-1;
+    if (env<0) { const char *e=getenv("TLG_PAD_ACCEL_GAIN"); env=e && *e ? (float)atof(e) : 0; if (!(env>0)) env=0; }
+    return env>0 ? env : vendor==0x28de ? 2.f : 1.f;
 }
 static int motion_button(void) {
     static int button=-2;
@@ -376,29 +494,199 @@ static float aim_curve(float v) {
     const float t=fminf((a-dead)/(1.f-dead),1.f);
     return v<0 ? -t*t : t*t;
 }
-static void sample_motion(PadData *d, SDL_Gamepad *g, const bool *k) {
+static int motion_sensors(void) {
+    if (motion.sensors<0) { const char *e=getenv("TLG_MOTION"); motion.sensors=!(e && !strcmp(e,"off")); }
+    return motion.sensors;
+}
+
+/* The game never calls SDL's gamepad functions itself. Each takes SDL's joystick lock, which the
+ * window thread holds while SDL looks for new controllers; on Windows the DirectInput part of that
+ * search takes ~300 ms whenever a device changes, and scePadReadState / scePadSetVibration waited
+ * all that time on the game's main thread: a third of a second without a frame, every few minutes.
+ * A pad thread reads the controller every millisecond into a snapshot and runs the motors; the
+ * game takes the latest snapshot. TLG_PAD_THREAD=0 reads on the caller instead (tests). */
+typedef struct {
+    SDL_Gamepad *pad; /* which one (NULL: none); only the reading thread calls SDL with it */
+    bool button[SDL_GAMEPAD_BUTTON_COUNT];
+    int16_t axis[SDL_GAMEPAD_AXIS_COUNT];
+    int touchpads, fingers[2];
+    struct { bool down; float x, y; } finger[2][2];
+    bool sensors; /* gyro and accelerometer read */
+    float gyro[3], accel[3];
+    uint16_t vendor;
+    char type[24], name[96];
+} PadSnap;
+typedef struct { bool pending; uint16_t low, high; uint32_t ms; } RumbleRequest;
+static pthread_mutex_t snap_lock=PTHREAD_MUTEX_INITIALIZER;
+static PadSnap shared_snap;
+static RumbleRequest rumble_request;
+/* Only the existing pad worker calls SDL for lightbar output. No input mappings,
+ * motor requests, or sensor settings are changed by this feature. */
+static struct { bool valid; uint8_t rgb[3]; uint64_t revision; } lightbar_request;
+static struct { bool enabled; uint64_t revision; } speaker_request;
+void runtime_pad_controller_speaker(int enabled) {
+    pthread_mutex_lock(&snap_lock);
+    if (speaker_request.enabled!=(enabled!=0)) {speaker_request.enabled=enabled!=0;++speaker_request.revision;}
+    pthread_mutex_unlock(&snap_lock);
+}
+static void apply_controller_speaker(SDL_Gamepad *pad) {
+    static SDL_JoystickID last_id;static uint64_t last_revision;
+    if (!pad) {last_id=0;return;}
+    bool enabled;uint64_t revision;
+    pthread_mutex_lock(&snap_lock);enabled=speaker_request.enabled;revision=speaker_request.revision;pthread_mutex_unlock(&snap_lock);
+    const SDL_JoystickID id=SDL_GetGamepadID(pad);
+    if ((!enabled && !last_id) || (id==last_id && revision==last_revision))return;
+    last_id=id;last_revision=revision;
+    if (ds4_usb_speaker_supported(pad)) {
+        if (ds4_usb_speaker(pad,enabled))
+            printf("Controller feedback: USB DualShock 4 internal speaker %s\n",enabled?"enabled":"returned to default routing");
+        else fprintf(stderr,"Controller feedback: could not %s USB DualShock 4 speaker route: %s\n",
+                     enabled?"enable":"restore",SDL_GetError());
+    } else if (dualsense_usb_speaker(pad,enabled))printf("Controller feedback: USB DualSense internal speaker %s\n",enabled?"enabled":"returned to default routing");
+    else if (dualsense_bt_speaker(pad,enabled))printf("Controller feedback: Bluetooth DualSense internal speaker %s\n",enabled?"enabled":"returned to default routing");
+}
+static int lightbar_enabled(void) {
+    const char *value=getenv("ISS_CONTROLLER_LIGHTBAR");
+    return !value || strcmp(value,"0");
+}
+static void request_lightbar(const uint8_t rgb[3]) {
+    pthread_mutex_lock(&snap_lock);
+    if (!lightbar_request.valid || memcmp(lightbar_request.rgb,rgb,3)) {
+        memcpy(lightbar_request.rgb,rgb,3);lightbar_request.valid=true;++lightbar_request.revision;
+        if (lightbar_request.revision<=8)printf("Controller feedback: game requested lightbar rgb=%u,%u,%u\n",rgb[0],rgb[1],rgb[2]);
+    }
+    pthread_mutex_unlock(&snap_lock);
+}
+static void apply_lightbar(SDL_Gamepad *pad) {
+    static SDL_JoystickID last_id;
+    static uint64_t last_revision;
+    if (!pad || !lightbar_enabled()) {last_id=0;return;}
+    const SDL_JoystickID id=SDL_GetGamepadID(pad);
+    uint8_t rgb[3];uint64_t revision;bool valid;
+    pthread_mutex_lock(&snap_lock);
+    valid=lightbar_request.valid;revision=lightbar_request.revision;memcpy(rgb,lightbar_request.rgb,3);
+    pthread_mutex_unlock(&snap_lock);
+    if (!valid || (id==last_id && revision==last_revision))return;
+    const bool changed_controller=id!=last_id;
+    last_id=id;last_revision=revision;
+    if (!SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad),SDL_PROP_GAMEPAD_CAP_RGB_LED_BOOLEAN,false)) {
+        if (changed_controller)printf("Controller feedback: %s has no RGB LED capability; lightbar skipped\n",SDL_GetGamepadName(pad));
+        return;
+    }
+    bool success=false;
+#ifdef ISS_DS4_BLUETOOTH
+    success=runtime_audio_bluetooth_led(id,rgb)!=0;
+#endif
+    if (!success) success=SDL_SetGamepadLED(pad,rgb[0],rgb[1],rgb[2]);
+    if (!success) {
+        if (changed_controller)fprintf(stderr,"Controller feedback: lightbar unavailable: %s\n",SDL_GetError());
+    } else if (changed_controller)printf("Controller feedback: game-driven lightbar active on %s\n",SDL_GetGamepadName(pad));
+}
+
+static void capture_gamepad(PadSnap *s) {
+    memset(s,0,sizeof(*s));
+    SDL_Gamepad *g=current_gamepad();
+    if (!g) return;
+    s->pad=g;
+    for (int b=0;b<SDL_GAMEPAD_BUTTON_COUNT;++b) s->button[b]=SDL_GetGamepadButton(g,(SDL_GamepadButton)b);
+    for (int a=0;a<SDL_GAMEPAD_AXIS_COUNT;++a) s->axis[a]=SDL_GetGamepadAxis(g,(SDL_GamepadAxis)a);
+    s->touchpads=SDL_GetNumGamepadTouchpads(g);
+    for (int pad=0;pad<s->touchpads && pad<2;++pad) {
+        s->fingers[pad]=SDL_GetNumGamepadTouchpadFingers(g,pad);
+        for (int f=0;f<s->fingers[pad] && f<2;++f)
+            if (!SDL_GetGamepadTouchpadFinger(g,pad,f,&s->finger[pad][f].down,&s->finger[pad][f].x,&s->finger[pad][f].y,NULL))
+                s->finger[pad][f].down=false;
+    }
+    s->vendor=SDL_GetGamepadVendor(g);
+    const char *type=SDL_GetGamepadStringForType(SDL_GetGamepadType(g)), *name=SDL_GetGamepadName(g);
+    snprintf(s->type,sizeof(s->type),"%s",type ? type : "");
+    snprintf(s->name,sizeof(s->name),"%s",name ? name : "");
+    if (motion_sensors() && SDL_GamepadHasSensor(g,SDL_SENSOR_GYRO) && SDL_GamepadHasSensor(g,SDL_SENSOR_ACCEL)) {
+        if (!SDL_GamepadSensorEnabled(g,SDL_SENSOR_GYRO)) {
+            SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_GYRO,true);
+            SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_ACCEL,true);
+            printf("Runtime: motion sensors enabled on %s (accel gain %.1f)\n",s->name,accel_gain(s->vendor));
+        }
+        s->sensors=SDL_GetGamepadSensorData(g,SDL_SENSOR_GYRO,s->gyro,3) && SDL_GetGamepadSensorData(g,SDL_SENSOR_ACCEL,s->accel,3);
+    }
+}
+static void apply_rumble(SDL_Gamepad *pad,uint16_t low,uint16_t high,uint32_t ms) {
+#ifdef ISS_DS4_BLUETOOTH
+    if (runtime_audio_bluetooth_rumble(SDL_GetGamepadID(pad),low,high,ms)) return;
+#endif
+    SDL_RumbleGamepad(pad,low,high,ms);
+}
+static void *pad_thread_main(void *argument) {
+    (void)argument;
+    for (;;) {
+        PadSnap s;
+        capture_gamepad(&s);
+        apply_lightbar(s.pad);
+        apply_controller_speaker(s.pad);
+        pthread_mutex_lock(&snap_lock);
+        shared_snap=s;
+        const RumbleRequest r=rumble_request;
+        rumble_request.pending=false;
+        pthread_mutex_unlock(&snap_lock);
+        if (r.pending && s.pad) apply_rumble(s.pad,r.low,r.high,r.ms);
+        SDL_DelayNS(1000000);
+    }
+    return NULL;
+}
+/* Called under lock. */
+static int use_pad_thread(void) {
+    if (pad_thread<0) {
+        const char *e=getenv("TLG_PAD_THREAD");
+        pad_thread=!(e && e[0]=='0');
+        pthread_t thread;
+        if (pad_thread && pthread_create(&thread,NULL,pad_thread_main,NULL)!=0) pad_thread=0;
+        else if (pad_thread) pthread_detach(thread);
+    }
+    return pad_thread;
+}
+static void read_gamepad(PadSnap *s) {
+    if (!use_pad_thread()) { capture_gamepad(s); apply_lightbar(s->pad); apply_controller_speaker(s->pad); return; }
+    pthread_mutex_lock(&snap_lock);
+    *s=shared_snap;
+    pthread_mutex_unlock(&snap_lock);
+}
+static SDL_Gamepad *gamepad_in_use(void) {
+    if (!use_pad_thread()) return current_gamepad();
+    pthread_mutex_lock(&snap_lock);
+    SDL_Gamepad *g=shared_snap.pad;
+    pthread_mutex_unlock(&snap_lock);
+    return g;
+}
+/* The motors of the controller in use; the pad thread runs the latest request within 1 ms. */
+static void pad_rumble(SDL_Gamepad *g, uint16_t low, uint16_t high, uint32_t ms) {
+    if (!use_pad_thread()) { apply_rumble(g,low,high,ms); return; }
+    pthread_mutex_lock(&snap_lock);
+    rumble_request=(RumbleRequest){true,low,high,ms};
+    pthread_mutex_unlock(&snap_lock);
+}
+static bool snap_button(const PadSnap *g, int button) {
+    return button>=0 && button<SDL_GAMEPAD_BUTTON_COUNT && g->button[button];
+}
+
+static void sample_motion(PadData *d, const PadSnap *g, const bool *k) {
     const uint64_t now=now_us();
     float dt=motion.last_us ? (float)(now-motion.last_us)*1e-6f : 0.f;
     if (dt>0.1f) dt=0.1f;
     motion.last_us=now;
-    if (motion.sensors<0) { const char *e=getenv("TLG_MOTION"); motion.sensors=!(e && !strcmp(e,"off")); }
-    /* Real sensors. */
+    /* Real sensors (enabled by capture_gamepad). */
     float gyro[3]={0,0,0}, accel[3]={0,0,0};
     int real=0;
-    if (g && motion.sensors && SDL_GamepadHasSensor(g,SDL_SENSOR_GYRO) && SDL_GamepadHasSensor(g,SDL_SENSOR_ACCEL)) {
-        if (!SDL_GamepadSensorEnabled(g,SDL_SENSOR_GYRO)) {
-            SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_GYRO,true);
-            SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_ACCEL,true);
-            printf("Runtime: motion sensors enabled on %s\n",SDL_GetGamepadName(g));
-        }
-        real=SDL_GetGamepadSensorData(g,SDL_SENSOR_GYRO,gyro,3) && SDL_GetGamepadSensorData(g,SDL_SENSOR_ACCEL,accel,3);
+    if (g && g->sensors) {
+        memcpy(gyro,g->gyro,sizeof(gyro));
+        memcpy(accel,g->accel,sizeof(accel));
+        real=1;
     }
     /* Simulated tilt: target roll/pitch from keys or the modifier + right stick. */
     float roll=0, pitch=0;
     int shake=0, simulated=0;
     if ((k && k[SDL_SCANCODE_T]) || (injected_motion & 1)) { roll=1.5708f; simulated=1; }
     if ((k && k[SDL_SCANCODE_G]) || (injected_motion & 2)) { roll=-1.5708f; simulated=1; }
-    if ((k && k[SDL_SCANCODE_Y]) || (injected_motion & 4)) { shake=1; simulated=1; }
+    if ((k && k[SDL_SCANCODE_Y]) || (injected_motion & 4) || mouse_shaking) { shake=1; simulated=1; }
     /* Keyboard: while T or G holds the can on its side, the arrow keys point it (they leave the
      * camera alone meanwhile, see read_pad). */
     const int key_can=k && (k[SDL_SCANCODE_T] || k[SDL_SCANCODE_G]);
@@ -410,8 +698,8 @@ static void sample_motion(PadData *d, SDL_Gamepad *g, const bool *k) {
         motion.aim_pitch=fminf(fmaxf(motion.aim_pitch,-1.2f),1.2f);
     }
     if (g) {
-        const int sticks=SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_LEFT_STICK) && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_RIGHT_STICK);
-        const int toggle=sticks || (motion_button()>=0 && SDL_GetGamepadButton(g,(SDL_GamepadButton)motion_button()));
+        const int sticks=g->button[SDL_GAMEPAD_BUTTON_LEFT_STICK] && g->button[SDL_GAMEPAD_BUTTON_RIGHT_STICK];
+        const int toggle=sticks || snap_button(g,motion_button());
         if (toggle && !motion.toggle_held) {
             motion.mode=!motion.mode;
             const char *lang=getenv("TLG_UI_LANG");
@@ -426,15 +714,15 @@ static void sample_motion(PadData *d, SDL_Gamepad *g, const bool *k) {
         if (sticks) d->buttons&=~(uint32_t)(BTN_L3|BTN_R3);
         if (motion.mode) {
             roll=1.5708f; /* on its side, like a spray can */
-            if (SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_SOUTH)) shake=1;
+            if (g->button[SDL_GAMEPAD_BUTTON_SOUTH]) shake=1;
             /* Either stick points the can while it is held (a rate, so the aim stays where it was
              * left), as far as ~80 degrees each way. Right = turn right, up = tip up. The speed
              * grows with the square of the push past the dead zone: slow for tracing a stencil,
              * fast at full tilt (~70 degrees/s). */
-            float sx=(float)SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFTX)/32767.f;
-            float sy=(float)SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFTY)/32767.f;
-            const float rx=(float)SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHTX)/32767.f;
-            const float ry=(float)SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHTY)/32767.f;
+            float sx=(float)g->axis[SDL_GAMEPAD_AXIS_LEFTX]/32767.f;
+            float sy=(float)g->axis[SDL_GAMEPAD_AXIS_LEFTY]/32767.f;
+            const float rx=(float)g->axis[SDL_GAMEPAD_AXIS_RIGHTX]/32767.f;
+            const float ry=(float)g->axis[SDL_GAMEPAD_AXIS_RIGHTY]/32767.f;
             if (fabsf(rx)>fabsf(sx)) sx=rx;
             if (fabsf(ry)>fabsf(sy)) sy=ry;
             const float speed=1.2f*tlggpu_sensor_aim_scale(); /* the menu's Controls tab */
@@ -462,7 +750,12 @@ static void sample_motion(PadData *d, SDL_Gamepad *g, const bool *k) {
             motion.q=quat_norm(quat_mul(motion.q,fix));
         }
         for (int i=0;i<3;++i) { d->acceleration[i]=a[i]; d->angular_velocity[i]=gyro[i]; }
+        const float gain=accel_gain(g->vendor);
+        if (gain!=1.f) accel_boost(d->acceleration,motion.gravity,gain,motion.boosting ? dt : 0.f);
+        motion.boosting=1;
+        if (motion.reset) motion.ref=(Quat){motion.q.w,-motion.q.x,-motion.q.y,-motion.q.z};
     } else {
+        motion.boosting=0;
         /* Ease toward the target so the game sees a turning motion, not a jump. */
         const float rate=dt>0 ? 1.f-expf(-dt*12.f) : 1.f;
         const Quat old=motion.q;
@@ -490,19 +783,21 @@ static void sample_motion(PadData *d, SDL_Gamepad *g, const bool *k) {
         }
         if (simulated && !motion.warned) { motion.warned=1; puts("Runtime: simulated controller tilt/shake in use"); }
     }
-    d->orientation[0]=motion.q.x; d->orientation[1]=motion.q.y; d->orientation[2]=motion.q.z; d->orientation[3]=motion.q.w;
+    motion.reset=0;
+    const Quat o=real && !simulated ? quat_mul(motion.ref,motion.q) : motion.q;
+    d->orientation[0]=o.x; d->orientation[1]=o.y; d->orientation[2]=o.z; d->orientation[3]=o.w;
 }
 /* Touchpad swipes for controllers without a touchpad ("Open Door": swipe right): hold View/
  * Select/- (gamepad) or Tab (keyboard) and push the right stick (arrow keys): a finger moves
  * from the middle of the pad toward that side. A quick tap without moving still clicks. */
 static struct { int active; } swipe;
-static void apply_swipe(PadData *d, SDL_Gamepad *g, const bool *k) {
+static void apply_swipe(PadData *d, const PadSnap *g, const bool *k) {
     float x=0, y=0;
     int held=0;
-    if (g && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_BACK)) {
+    if (g && g->button[SDL_GAMEPAD_BUTTON_BACK]) {
         held=1;
-        x=(float)SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHTX)/32767.f;
-        y=(float)SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHTY)/32767.f;
+        x=(float)g->axis[SDL_GAMEPAD_AXIS_RIGHTX]/32767.f;
+        y=(float)g->axis[SDL_GAMEPAD_AXIS_RIGHTY]/32767.f;
     }
     if (k && k[SDL_SCANCODE_TAB]) {
         held=1;
@@ -563,27 +858,56 @@ static void load_pad_mode(void) {
 /* What sample_mouse decided for this sample; sample_host turns it into touches and buttons. */
 static struct { bool active, two_fingers; MouseTouch finger; MouseTouchOut out; } mouse_pad;
 
-/* The mouse: motion on the right stick, buttons and wheel pulses as source bits (1 << (source -
+/* The mouse: native camera motion, buttons and wheel pulses as source bits (1 << (source -
  * MOUSE_SOURCE)). A wheel notch holds its button WHEEL_PULSE_US, then WHEEL_GAP_US up, so each
  * notch is one press (menus scroll one item per notch). TLG_MOUSE_LOG=1 (or TLG_MOUSE_TEST)
  * logs what the game gets. Called under lock. */
 enum { WHEEL_PULSE_US=80000, WHEEL_GAP_US=40000 };
-static MouseStick mouse_stick;
-static uint64_t mouse_last_us;
+static PwHold power_hold;
+static float power_mouse_dx,power_mouse_dy,power_cursor_x,power_cursor_y;
+static int power_cursor_source;
+static MouseShake mouse_shake;
+/* TLG_MOUSE_SHAKE=0 turns the wiggle shake off; TLG_MOUSE_SHAKE_COUNTS (default 40) is how far
+ * one swing must travel, in mouse counts (raise it if aiming shakes the can by itself). */
+static float mouse_shake_counts(void) {
+    static float value=-1.0f;
+    if (value<0.0f) {
+        const char *off=getenv("TLG_MOUSE_SHAKE"), *counts=getenv("TLG_MOUSE_SHAKE_COUNTS");
+        value=counts && *counts ? strtof(counts,NULL) : MOUSE_SHAKE_MIN_STROKE;
+        if (!(value>0.0f)) value=MOUSE_SHAKE_MIN_STROKE;
+        if (off && *off=='0') value=0.0f;
+        printf("Runtime: mouse shake %s (%.0f counts per swing)\n",value>0.0f ? "on" : "off",value);
+    }
+    return value;
+}
+/* Whether the keyboard map binds a wheel direction (then the wheel does not shake). */
+static bool wheel_bound(void) {
+    bool bound=false;
+    pthread_mutex_lock(&key_map_lock);
+    for (size_t i=0;i<key_map.count;++i)
+        if (key_map.entries[i].source>=WHEEL_UP && key_map.entries[i].source<=WHEEL_RIGHT) bound=true;
+    pthread_mutex_unlock(&key_map_lock);
+    return bound;
+}
 static struct { int pending; uint64_t until, next; } wheel[4];
 static size_t mouse_samples;
 static uint32_t sample_mouse(PadData *d, bool aiming_can, const bool *k) {
     TlgGpuMouse m;
     tlggpu_mouse_take(&m);
+    power_mouse_dx=m.dx;power_mouse_dy=m.dy;
     TlgGpuInputSettings in;
     tlggpu_input_settings(&in);
+    if(power_hold.open){
+        runtime_mouse_aim_motion(0,0,in.sensitivity,in.invert_y,0);
+        return 0; /* mouse motion selects a wheel sector; clicks do not attack */
+    }
     const uint64_t now=d->timestamp;
-    const float dt=mouse_last_us ? (float)(now-mouse_last_us)/1e6f : MOUSE_STICK_WINDOW_S;
-    mouse_last_us=now;
     static bool was_captured;
     if (!in.mouse_enabled || !m.captured) {
-        memset(&mouse_stick,0,sizeof(mouse_stick));
+        runtime_mouse_aim_motion(0,0,in.sensitivity,in.invert_y,0);
         memset(wheel,0,sizeof(wheel));
+        mouse_shake_reset(&mouse_shake);
+        mouse_shaking=0;
         was_captured=false;
         mouse_pad.active=mouse_pad.two_fingers=false;
         mouse_touch_lift(&mouse_pad.finger);
@@ -593,7 +917,6 @@ static uint32_t sample_mouse(PadData *d, bool aiming_can, const bool *k) {
     load_pad_mode();
     if (!was_captured) { m.dx=m.dy=0; was_captured=true; } /* motion from before the game read the pad */
     ++mouse_samples;
-    const MouseStickParams p={in.sensitivity,in.smoothing,in.accel,in.deadzone,in.invert_y};
     const uint32_t raw=m.held|m.pressed;
     /* Touchpad mode: the mode key (a keyboard key or a mouse button). */
     bool key_down=false;
@@ -626,7 +949,6 @@ static uint32_t sample_mouse(PadData *d, bool aiming_can, const bool *k) {
     }
     mouse_pad.active=pad_mode;
     if (pad_mode) {
-        memset(&mouse_stick,0,sizeof(mouse_stick));
         const int left=(raw>>(MOUSE_LEFT-MOUSE_SOURCE)) & 1, middle=(raw>>(MOUSE_MIDDLE-MOUSE_SOURCE)) & 1;
         const int right=(raw>>(MOUSE_RIGHT-MOUSE_SOURCE)) & 1;
         mouse_pad.two_fingers=right;
@@ -643,16 +965,27 @@ static uint32_t sample_mouse(PadData *d, bool aiming_can, const bool *k) {
     } else if (aiming_can) {
         /* Sensor mode / T / G (the graffiti spray can): the mouse points the can, like the arrow
          * keys and the sticks do there (sample_motion), and leaves the camera alone. */
-        const float k=0.0006f*in.sensitivity*tlggpu_sensor_aim_scale();
+        /* A quick back-and-forth of the mouse (or the wheel) shakes the can (mouse_shake.h); the
+         * can holds still meanwhile, so the wiggle does not move the cursor. */
+        const float counts=mouse_shake_counts();
+        const int notches=m.wheel_up+m.wheel_down+m.wheel_left+m.wheel_right;
+        const int shaking=counts>0.0f && mouse_shake_update(&mouse_shake,m.dx,m.dy,wheel_bound() ? 0 : notches,now,counts);
+        if (shaking!=mouse_shaking) printf("Runtime: mouse shake %s\n",shaking ? "started" : "stopped");
+        mouse_shaking=shaking;
+        const float k=shaking ? 0.0f : 0.0006f*in.sensitivity*tlggpu_sensor_aim_scale();
         motion.yaw-=m.dx*k;
         motion.aim_pitch+=(in.invert_y ? m.dy : -m.dy)*k;
         motion.yaw=fminf(fmaxf(motion.yaw,-1.4f),1.4f);
         motion.aim_pitch=fminf(fmaxf(motion.aim_pitch,-1.2f),1.2f);
-        memset(&mouse_stick,0,sizeof(mouse_stick));
-    } else mouse_stick_update(&mouse_stick,&p,m.dx,m.dy,dt);
+    } else {
+        /* Mouse camera input never enters the legacy right-stick emulator.
+         * If the guarded direct hook is unavailable, leave controller axes
+         * untouched and do not silently revive old mouse settings. */
+        runtime_mouse_aim_motion(m.dx,m.dy,in.sensitivity,in.invert_y,1);
+    }
+    if(aiming_can || pad_mode)runtime_mouse_aim_motion(0,0,in.sensitivity,in.invert_y,0);
+    if (!aiming_can || pad_mode) { mouse_shake_reset(&mouse_shake); mouse_shaking=0; }
     const uint8_t base_x=d->right_x, base_y=d->right_y;
-    d->right_x=mouse_stick_add(d->right_x,mouse_stick_axis(&mouse_stick,&p,0));
-    d->right_y=mouse_stick_add(d->right_y,mouse_stick_axis(&mouse_stick,&p,1));
     uint32_t bits=raw;
     if (pad_mode) bits&=~(uint32_t)MOUSE_BUTTONS_MASK; /* the buttons are fingers now */
     const int32_t notches[4]={m.wheel_up,m.wheel_down,m.wheel_left,m.wheel_right};
@@ -694,6 +1027,47 @@ static void apply_mouse_touch(PadData *d) {
     ++d->touch_count;
     if (mouse_pad.out.click) d->buttons|=BTN_TOUCHPAD;
 }
+/* Trackpad haptics (two touchpads: Steam Controller 2026, Steam Deck), as the Steam Controller
+ * patch in #639 has them: a tick when a thumb lands on a trackpad, and a pulse every 2.5% of a
+ * trackpad a thumb slides, at most every 45 ms per trackpad. None while the game runs the motors
+ * (its rumble is never cut short) or with the menu's vibration off. */
+static uint8_t game_motors[2]; /* the game's last vibration (pad_vibration) */
+static void trackpad_haptics(const PadSnap *g, uint64_t now) {
+    static struct { bool down; float x, y; uint64_t pulse; } pad[2];
+    static bool touching;
+    TlgGpuInputSettings in;
+    tlggpu_input_settings(&in);
+    const bool quiet=!in.rumble || game_motors[0] || game_motors[1];
+    bool any=false;
+    for (int side=0;side<2;++side) {
+        const bool down=g->finger[side][0].down;
+        const float x=g->finger[side][0].x, y=g->finger[side][0].y;
+        if (!down) { pad[side].down=false; continue; }
+        any=true;
+        if (!pad[side].down) { pad[side].down=true; pad[side].x=x; pad[side].y=y; continue; }
+        if (hypotf(x-pad[side].x,y-pad[side].y)>=0.025f && now-pad[side].pulse>=45000) {
+            if (!quiet) pad_rumble(g->pad,4200,11000,24);
+            pad[side].x=x; pad[side].y=y; pad[side].pulse=now;
+        }
+    }
+    if (any && !touching && !quiet) pad_rumble(g->pad,1800,7000,28);
+    touching=any;
+}
+/* A Steam Controller is also a mouse and a keyboard ("lizard mode", which SDL does not keep off
+ * over Bluetooth): its trackpads moved the mouse and so the camera, its buttons and stick sent keys
+ * (Esc let the mouse go, Ctrl turned on the mouse touchpad mode, the arrows turned the camera and
+ * the menus lost the stick). While one is the controller in use, the keyboard and the mouse are
+ * not read (from the Steam Controller patch in #639); TLG_NATIVE_PAD_ONLY=1 does it for any pad. */
+static bool pad_only(const PadSnap *g) {
+    static int env=-1;
+    static const SDL_Gamepad *told;
+    if (env<0) { const char *e=getenv("TLG_NATIVE_PAD_ONLY"); env=e && *e && *e!='0'; }
+    /* SDL_GAMEPAD_TYPE_STEAM is new in SDL 3.4.18: its name, from the SDL that runs, or Valve's
+     * pads with two trackpads (Steam Input's virtual pad has none, so the keyboard stays there). */
+    const bool only=env || !strcmp(g->type,"steam") || (g->vendor==0x28de && g->touchpads>1);
+    if (only && told!=g->pad) { told=g->pad; printf("Runtime: %s: keyboard and mouse not read while it is in use\n",g->name); }
+    return only;
+}
 static void key_axis(uint8_t *axis, bool negative, bool positive) {
     if (negative || positive) *axis=(uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0));
 }
@@ -703,10 +1077,10 @@ static uint64_t gyro_last_us;
 
 /* Real gyro only: never reuse the simulated graffiti angular velocity. Read once per pad
  * sample and add to the physical stick after all keyboard/mouse/touchpad mapping. */
-static void sample_gyro_aim(PadData *d, SDL_Gamepad *g, int blocked) {
+static void sample_gyro_aim(PadData *d, const PadSnap *g, int blocked) {
     TlgGpuInputSettings settings;
     tlggpu_input_settings(&settings);
-    const SDL_JoystickID id=g ? SDL_GetGamepadID(g) : 0;
+    const SDL_JoystickID id=g ? (SDL_JoystickID)(uintptr_t)g->pad : 0;
     if (id!=gyro_device) { gyro_aim_reset(&gyro_aim); gyro_last_us=0; gyro_device=id; }
     const uint64_t now=d->timestamp;
     const float dt=gyro_last_us ? (float)(now-gyro_last_us)*1e-6f : 0;
@@ -716,9 +1090,8 @@ static void sample_gyro_aim(PadData *d, SDL_Gamepad *g, int blocked) {
                !motion.mode && !blocked && !touch && (d->buttons & BTN_L2);
     float velocity[3]={0,0,0};
     if (active) {
-        active=SDL_GamepadHasSensor(g,SDL_SENSOR_GYRO) &&
-               (SDL_GamepadSensorEnabled(g,SDL_SENSOR_GYRO) || SDL_SetGamepadSensorEnabled(g,SDL_SENSOR_GYRO,true)) &&
-               SDL_GetGamepadSensorData(g,SDL_SENSOR_GYRO,velocity,3);
+        active=g->sensors;
+        if (active) memcpy(velocity,g->gyro,sizeof(velocity));
     }
     const GyroAimParams p={settings.gyro_sensitivity,settings.gyro_smoothing,
                           settings.gyro_noise,settings.gyro_deadzone,settings.gyro_invert_y};
@@ -727,41 +1100,51 @@ static void sample_gyro_aim(PadData *d, SDL_Gamepad *g, int blocked) {
     d->right_y=gyro_aim_add(d->right_y,gyro_aim_axis(&gyro_aim,&p,1));
 }
 static void sample_host(PadData *d) {
+    power_mouse_dx=power_mouse_dy=0;
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
     d->orientation[3]=1.0f;
     d->connected=1; d->connected_count=connected_count ? connected_count : 1;
     d->timestamp=now_us();
-    SDL_Gamepad *g=current_gamepad();
-    if (tlggpu_overlay_captures_input()) {
-        gyro_aim_reset(&gyro_aim); gyro_last_us=0;
-        return; /* settings menu open: neutral input */
-    }
+    PadSnap snap;
+    read_gamepad(&snap);
+    const PadSnap *g=snap.pad ? &snap : NULL;
+    if (tlggpu_overlay_captures_input()) { gyro_aim_reset(&gyro_aim); gyro_last_us=0; return; } /* settings menu open: neutral input */
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
     load_button_maps();
     if (g) {
         for (size_t i=0;i<pad_map.count;++i)
-            if (SDL_GetGamepadButton(g,(SDL_GamepadButton)pad_map.entries[i].source)) d->buttons|=pad_map.entries[i].ps;
+            if (snap_button(g,pad_map.entries[i].source)) d->buttons|=pad_map.entries[i].ps;
         const uint32_t mapped=d->buttons;
-        d->left_x=axis(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFTX)); d->left_y=axis(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFTY));
-        d->right_x=axis(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHTX)); d->right_y=axis(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHTY));
-        d->l2=trigger(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFT_TRIGGER)); d->r2=trigger(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+        stick(g->axis[SDL_GAMEPAD_AXIS_LEFTX],g->axis[SDL_GAMEPAD_AXIS_LEFTY],&d->left_x,&d->left_y);
+        stick(g->axis[SDL_GAMEPAD_AXIS_RIGHTX],g->axis[SDL_GAMEPAD_AXIS_RIGHTY],&d->right_x,&d->right_y);
+        d->l2=trigger(g->axis[SDL_GAMEPAD_AXIS_LEFT_TRIGGER]); d->r2=trigger(g->axis[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER]);
         if (d->l2>30) d->buttons|=BTN_L2;
         if (d->r2>30) d->buttons|=BTN_R2;
         if (mapped & BTN_L2) d->l2=255;
         if (mapped & BTN_R2) d->r2=255;
-        if (SDL_GetNumGamepadTouchpads(g)>0) {
-            const int fingers=SDL_GetNumGamepadTouchpadFingers(g,0);
-            for (int finger=0;finger<fingers && d->touch_count<2;++finger) {
-                bool down=false;
-                float x=0, y=0;
-                if (SDL_GetGamepadTouchpadFinger(g,0,finger,&down,&x,&y,NULL) && down) {
+        /* Two touchpads (Steam Controller 2026, Steam Deck: the left and right trackpads) are the
+         * left and right halves of the PS4 touchpad; the right one's click (misc2 there) clicks it
+         * too, as the left one's does (touchpad). */
+        const int pads=g->touchpads;
+        for (int pad=0;pad<pads && pad<2;++pad) {
+            for (int finger=0;finger<g->fingers[pad] && finger<2 && d->touch_count<2;++finger) {
+                const bool down=g->finger[pad][finger].down;
+                float x=g->finger[pad][finger].x;
+                const float y=g->finger[pad][finger].y;
+                if (down) {
+                    if (pads>1) x=(x+(float)pad)*0.5f;
                     d->touches[d->touch_count++]=(PadTouch){.x=touch_axis(x,1919),
-                        .y=touch_axis(y,942),.id=(uint8_t)finger};
+                        .y=touch_axis(y,942),.id=(uint8_t)(pad*2+finger)};
                 }
             }
         }
+        if (pads>1 && g->button[SDL_GAMEPAD_BUTTON_MISC2]) d->buttons|=BTN_TOUCHPAD;
+        if (pads>1) trackpad_haptics(g,d->timestamp);
+        static const SDL_Gamepad *told;
+        if (pads>1 && told!=g->pad) { told=g->pad; printf("Runtime: %s: its 2 trackpads are the halves of the PS4 touchpad\n",g->name); }
     }
+    if (g && pad_only(g)) k=NULL;
     sample_motion(d,g,k);
     /* Physical free-look only, before keyboard, mouse and gyro are added. Sensor mode owns
      * the sticks for graffiti; L2 keeps the game's original aiming response. */
@@ -776,18 +1159,24 @@ static void sample_host(PadData *d) {
      * follows the keys only while one of them is held. */
     if (!k) { sample_gyro_aim(d,g,0); return; }
     const uint32_t mouse=sample_mouse(d,motion.mode || k[SDL_SCANCODE_T] || k[SDL_SCANCODE_G],k); /* adds to the right stick */
-    for (size_t i=0;i<key_map.count;++i) {
-        const int source=key_map.entries[i].source;
+    ButtonMap keys;
+    pthread_mutex_lock(&key_map_lock);keys=key_map;pthread_mutex_unlock(&key_map_lock);
+    uint32_t held=0;
+    for (size_t i=0;i<keys.count;++i) {
+        const int source=keys.entries[i].source;
         const bool down=source>=MOUSE_SOURCE ? source<MOUSE_SOURCE_END && (mouse>>(source-MOUSE_SOURCE) & 1)
                                              : source<SDL_SCANCODE_COUNT && k[source];
-        if (down) d->buttons|=key_map.entries[i].ps;
+        if (down) held|=keys.entries[i].ps;
     }
+    /* The stick directions are host-only: they become stick positions, not buttons. */
+    d->buttons|=held & ~(uint32_t)STICK_KEYS;
+    d->buttons&=~(uint32_t)STICK_KEYS;
     if (d->buttons & BTN_L2) d->l2=255;
     if (d->buttons & BTN_R2) d->r2=255;
-    key_axis(&d->left_x,k[SDL_SCANCODE_A],k[SDL_SCANCODE_D]);
-    key_axis(&d->left_y,k[SDL_SCANCODE_W],k[SDL_SCANCODE_S]);
-    key_axis(&d->right_x,k[SDL_SCANCODE_LEFT],k[SDL_SCANCODE_RIGHT]);
-    key_axis(&d->right_y,k[SDL_SCANCODE_UP],k[SDL_SCANCODE_DOWN]);
+    key_axis(&d->left_x,(held & LS_LEFT)!=0,(held & LS_RIGHT)!=0);
+    key_axis(&d->left_y,(held & LS_UP)!=0,(held & LS_DOWN)!=0);
+    key_axis(&d->right_x,(held & RS_LEFT)!=0,(held & RS_RIGHT)!=0);
+    key_axis(&d->right_y,(held & RS_UP)!=0,(held & RS_DOWN)!=0);
     if (k[SDL_SCANCODE_T] || k[SDL_SCANCODE_G]) d->right_x=d->right_y=128; /* the arrows point the can */
     apply_swipe(d,g,k);
     apply_mouse_touch(d);
@@ -966,9 +1355,57 @@ static void replay_sample(PadData *d) {
 /* After the menu or the text dialog closes, buttons still held (the Cross that accepted a
  * name) stay hidden until released: the game would take them as a new press. */
 static int hold_after_capture;
+static unsigned power_previous_keys;
+static void power_switch_input(PadData *d){
+    IssPowerWheelStatus status;runtime_power_wheel_status(&status);
+    int enabled,keys[4],instant;tlggpu_power_wheel_settings(&enabled,keys,&instant);
+    const int capture=tlggpu_overlay_captures_input();
+    const int gameplay=runtime_power_wheel_gameplay();
+    const bool *keyboard=SDL_WasInit(SDL_INIT_VIDEO)?SDL_GetKeyboardState(NULL):NULL;
+    const int focus=SDL_WasInit(SDL_INIT_VIDEO)&&SDL_GetKeyboardFocus()!=NULL;
+    int allowed=enabled&&status.supported&&status.ready&&!status.error&&!capture&&focus&&gameplay;
+    if(d->buttons&(BTN_OPTIONS|BTN_TOUCHPAD))allowed=0;
+    unsigned held=0;
+    for(int i=0;i<4;i++)if(keyboard&&keys[i]>0&&keys[i]<SDL_SCANCODE_COUNT&&keyboard[keys[i]])held|=1u<<i;
+    int keyboard_choice=-1;
+    if(allowed)for(int i=0;i<4;i++)if((held&~power_previous_keys)&(1u<<i)){
+        if(status.unlocked_mask&(1<<i))runtime_power_wheel_request(i);
+        keyboard_choice=i;
+        break;
+    }
+    power_previous_keys=held;
+    const int down=!!(d->buttons&BTN_DOWN);
+    float x=((float)d->right_x-128.0f)/127.0f,y=((float)d->right_y-128.0f)/127.0f;
+    if(!allowed||!down||!power_hold.held){power_cursor_source=0;power_cursor_x=power_cursor_y=0;}
+    if(power_hold.open&&allowed&&down){
+        if(pw_direction(x,y)>=0)power_cursor_source=0;
+        else if(power_mouse_dx!=0||power_mouse_dy!=0){
+            power_cursor_source=1;
+            power_cursor_x=fminf(1,fmaxf(-1,power_cursor_x+power_mouse_dx/240.0f));
+            power_cursor_y=fminf(1,fmaxf(-1,power_cursor_y+power_mouse_dy/240.0f));
+        }
+        if(keyboard_choice>=0){
+            static const float dx[4]={-0.8f,0,0.8f,0},dy[4]={0,-0.8f,0,0.8f};
+            power_cursor_source=2;power_cursor_x=dx[keyboard_choice];power_cursor_y=dy[keyboard_choice];
+            if(instant){power_hold.choice=keyboard_choice;power_hold.fired=1;}
+        }
+        if(power_cursor_source){x=power_cursor_x;y=power_cursor_y;}
+    }
+    PwHoldResult wheel=pw_hold_mode(&power_hold,now_us(),allowed,down,x,y,
+                              instant,(unsigned)status.unlocked_mask);
+    runtime_power_wheel_visual(wheel.open,wheel.choice);
+    if(wheel.consume_down)d->buttons&=~BTN_DOWN;
+    if(wheel.tap)d->buttons|=BTN_DOWN;
+    if(wheel.consume_stick){
+        d->right_x=d->right_y=128;
+        runtime_mouse_aim_motion(0,0,1,0,0);
+    }
+    if(wheel.request>=0&&(status.unlocked_mask&(1<<wheel.request)))runtime_power_wheel_request(wheel.request);
+}
 static void sample(PadData *d) {
     sample_host(d);
-    if (tlggpu_overlay_captures_input()) { hold_after_capture=1; click.side=-1; return; }
+    power_switch_input(d);
+    if (tlggpu_overlay_captures_input()) { hold_after_capture=1; click.side=-1; number_touches(d); return; }
     record_sample(d); /* the click sources as they are: a replay plays them again */
     read_inject();
     replay_sample(d);
@@ -982,6 +1419,7 @@ static void sample(PadData *d) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
     }
+    number_touches(d);
 }
 
 static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }
@@ -1026,7 +1464,7 @@ static ABI int32_t pad_info(int32_t handle, ControllerInfo *info) {
     info->dead_zone_left=info->dead_zone_right=2;
     info->connection_type=0; info->connected=1; info->device_class=0;
     pthread_mutex_lock(&lock);
-    current_gamepad();
+    if (!use_pad_thread()) current_gamepad();
     info->connected_count=connected_count ? connected_count : 1;
     pthread_mutex_unlock(&lock);
     return 0;
@@ -1034,9 +1472,21 @@ static ABI int32_t pad_info(int32_t handle, ControllerInfo *info) {
 static ABI int32_t pad_vibration(int32_t handle, const uint8_t *param) {
     if (handle!=PAD_HANDLE || !opened) return ERR_INVALID_HANDLE;
     if (!param) return ERR_INVALID_ARG;
+    static RumbleGate gate;  /* under the lock */
+    /* The menu's Vibration switch (tlg.ini rumble, TLG_RUMBLE=0): off stops running motors once. */
+    TlgGpuInputSettings in;
+    tlggpu_input_settings(&in);
     pthread_mutex_lock(&lock);
-    SDL_Gamepad *g=current_gamepad();
-    if (g) SDL_RumbleGamepad(g,(uint16_t)(param[0]*257),(uint16_t)(param[1]*257),1000);
+    SDL_Gamepad *g=gamepad_in_use();
+    game_motors[0]=in.rumble ? param[0] : 0;
+    game_motors[1]=in.rumble ? param[1] : 0;
+    if (!in.rumble) {
+        if (g && (gate.low || gate.high) && rumble_gate(&gate,0,0,now_us())) pad_rumble(g,0,0,0);
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+    if (g && rumble_gate(&gate,param[0],param[1],now_us()))
+        pad_rumble(g,(uint16_t)(param[0]*257),(uint16_t)(param[1]*257),1000);
     pthread_mutex_unlock(&lock);
     return 0;
 }
@@ -1052,21 +1502,38 @@ static ABI int32_t pad_motion_state(int32_t handle, uint8_t enable) {
 
 static ABI int32_t pad_light_bar(int32_t handle, const uint8_t *rgb) {
     if (handle!=PAD_HANDLE || !opened) return ERR_INVALID_HANDLE;
-    (void)rgb; return 0;
+    if (!rgb)return ERR_INVALID_ARG;
+    if (lightbar_enabled())request_lightbar(rgb);
+    return 0;
+}
+static ABI int32_t pad_reset_light_bar(int32_t handle) {
+    const uint8_t blue[3]={0,0,64};
+    return pad_light_bar(handle,blue);
+}
+/* The orientation the controller has now becomes the reference, as on a DualShock 4 (applied at
+ * the next sample with real sensors; the simulated spray can keeps its own pose). */
+static ABI int32_t pad_reset_orientation(int32_t handle) {
+    if (handle!=PAD_HANDLE || !opened) return ERR_INVALID_HANDLE;
+    static int calls;
+    if (!calls++ || runtime_verbose()) puts("Runtime: scePadResetOrientation");
+    pthread_mutex_lock(&lock);
+    motion.reset=1;
+    pthread_mutex_unlock(&lock);
+    return 0;
 }
 static const RuntimeExport exports[]={
-    {"scePadSetLightBar",pad_light_bar}, {"scePadResetLightBar",pad_ok_handle},
+    {"scePadSetLightBar",pad_light_bar}, {"scePadResetLightBar",pad_reset_light_bar},
     {"scePadInit",pad_init}, {"scePadOpen",pad_open}, {"scePadClose",pad_close},
     {"scePadReadState",pad_read_state}, {"scePadRead",pad_read},
     {"scePadGetControllerInformation",pad_info}, {"scePadSetVibration",pad_vibration},
-    {"scePadResetOrientation",pad_ok_handle},
+    {"scePadResetOrientation",pad_reset_orientation},
     {"scePadSetAngularVelocityDeadbandState",pad_ok_handle_flag}, {"scePadSetTiltCorrectionState",pad_ok_handle_flag},
     {"scePadSetMotionSensorState",pad_motion_state},
 };
 uintptr_t runtime_pad_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
 void runtime_pad_report(void) {
     printf("Runtime: pad reads=%zu (mouse captured in %zu), gamepad=%s\n",reads,mouse_samples,
-           gamepad ? SDL_GetGamepadName(gamepad) : "none");
+           pad_thread==1 ? (shared_snap.pad ? shared_snap.name : "none") : gamepad ? SDL_GetGamepadName(gamepad) : "none");
 }
 
 /* probe --gamepad: runs before any game state exists, so it uses its own SDL gamepad and leaves

@@ -65,6 +65,17 @@ class LibraryTests(unittest.TestCase):
         with mock.patch.object(library.updater, 'extract', side_effect=AssertionError('redownload')):
             self.assertEqual(first, library.install(self.root/'missing.zip', self.betas, self.release, 'launcher.exe'))
 
+    def test_sunny_dates_coexist_despite_shared_upstream_package_version(self):
+        archive = self.package('v2026.10.28-3722737')
+        for day in ('07', '12'):
+            tag = 'sunny-beta-2026.11.' + day
+            release = dict(self.release, tag=tag, source='sunny')
+            installed = library.install(archive, self.betas, release, 'launcher.exe')
+            self.assertEqual(installed.name, tag)
+            self.assertEqual(library.record(self.betas, tag)['package_version'], 'v2026.10.28-3722737')
+        self.assertEqual(len(library.list_installed(self.betas)), 2)
+        self.assertEqual((self.user/'save.dat').read_text(), 'save')
+
     def test_corrupt_payload_is_not_registered(self):
         with self.assertRaises(update_install.InstallError):
             self.install(corrupt=True)

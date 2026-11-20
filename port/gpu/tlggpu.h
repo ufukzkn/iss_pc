@@ -81,6 +81,7 @@ typedef struct { uint64_t submitted, shown, presented, vblanks, faults_in_progre
 void tlggpu_frame_counters(TlgGpuFrameCounters *out);
 /* Draws recorded so far (gameplay detection for scripted routes, src/runtime_pad.c). */
 uint64_t tlggpu_total_draws(void);
+
 /* The game opened a file (guest path): feeds the region trace (TLG_REGION_TRACE=1, gpu/shim/tlg_region.h). */
 void tlggpu_note_open(const char *guest_path);
 /* The mouse, gathered by the window thread while the game has it (SDL relative mode: the window
@@ -98,11 +99,13 @@ void tlggpu_mouse_take(TlgGpuMouse *mouse);
  * tlg.ini key_map value, the TLG_KEY_MAP syntax (runtime_pad.c), read once at start. */
 typedef struct {
     int32_t mouse_enabled, invert_y;
-    float sensitivity, smoothing, accel, deadzone;
+    int32_t rumble;             /* controller vibration on (tlg.ini rumble, TLG_RUMBLE) */
+    float sensitivity;
     char key_map[512];
     int32_t gyro_aim, gyro_invert_y, gyro_focused;
     float gyro_sensitivity, gyro_smoothing, gyro_noise, gyro_deadzone;
     float stick_look_sensitivity;
+    char key_binds[1024];       /* tlg.ini key_binds: the in-game bindings window (applied after key_map) */
 } TlgGpuInputSettings;
 void tlggpu_input_settings(TlgGpuInputSettings *settings);
 /* Touchpad mode of the mouse (runtime_pad.c): while active, a small touchpad with the virtual

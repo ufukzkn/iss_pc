@@ -19,9 +19,9 @@ int main() {
     assert(!UseOnDemandPipelines(true, false, false));
     assert(!UseOnDemandPipelines(true, true, true));
     // A precompiled cache can load on first use without changing the cached shader code.
-    assert(UseOnDemandShaderStages(true, false, nullptr));
+    assert(!UseOnDemandShaderStages(true, false, nullptr));
     assert(UseOnDemandShaderStages(true, false, "1"));
-    assert(UseOnDemandShaderStages(true, false, ""));
+    assert(!UseOnDemandShaderStages(true, false, ""));
     assert(!UseOnDemandShaderStages(true, false, "0"));
     // Never bypass first-start preparation or a requested background pipeline rebuild.
     const char* requests[]{nullptr, "0", "1"};

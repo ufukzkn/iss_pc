@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/tlggpu.h"
+#include "iss_trophies.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,7 +98,17 @@ static ABI int32_t system_status(unsigned char *status) {
 }
 static ABI int32_t system_event(void *event) { (void)event; return SYSTEM_NO_EVENT; }
 static ABI int32_t hide_splash(void) { note("SystemService: splash screen hidden"); return 0; }
-static ABI int32_t safe_area(float *info) { if (!info) return SYSTEM_PARAMETER; *info=1.0f; return 0; } /* full screen */
+#include "iss_native_resolution.h"
+static ABI int32_t safe_area(float *info) {
+    if (!info) return SYSTEM_PARAMETER;
+    *info=runtime_native_safe_area();
+    /* Each value the game is given, once per change, with the query count (2026-11-07: shows whether
+     * a live HUD placement change reaches the game). */
+    static _Atomic unsigned queries;static _Atomic float last=-1.f;
+    const unsigned n=++queries;
+    if (*info!=last) { last=*info; fprintf(stderr,"SAFE_AREA query %u -> %.4f\n",n,(double)*info); }
+    return 0;
+}
 static ABI int32_t disable_music_player(void) { return 0; }
 static ABI int32_t launch_browser(void) { note("SystemService: web browser request ignored (offline)"); return 0; }
 
@@ -137,9 +148,100 @@ static ABI int32_t netctl_nat(uint32_t *info) {
 }
 static ABI int32_t lib_init_id(void) { return new_id(); }
 static ABI int32_t ok_void(void) { return 0; }
-static ABI int32_t http_fail(void) { return HTTP_NETWORK; }
 /* Objects are created so setup code proceeds; any transfer fails as unplugged. */
 static ABI int32_t http_object(void) { return new_id(); }
+static int local_psn_enabled(void);
+static const char local_online_id[20]="PaperTrailLocal";
+static _Thread_local struct {
+    int request;
+    size_t size, offset;
+    char body[1024];
+} papertrail;
+
+static ABI int32_t http_request_url(int connection,int method,const char *url,uint64_t size) {
+    (void)connection; (void)size;
+    const int request=http_object();
+    if (local_psn_enabled() && method==1 && url &&
+        !strcmp(url,"https://api.infamouspapertrail.com/update")) {
+        papertrail.request=request;
+        papertrail.size=papertrail.offset=0;
+    }
+    return request;
+}
+
+static int papertrail_evidence(const char *json,int week,int mission) {
+    char key[12];
+    snprintf(key,sizeof(key),"\"w%dm%de\"",week,mission);
+    const char *field=strstr(json,key);
+    if (!field) return 0;
+    field+=strlen(key);
+    field+=strspn(field," \t\r\n");
+    if (*field!=':') return 0;
+    ++field;
+    field+=strspn(field," \t\r\n");
+    return (*field=='1' && strchr(",} \t\r\n",field[1])) ||
+        (!strncmp(field,"true",4) && strchr(",} \t\r\n",field[4]));
+}
+
+static ABI int32_t http_send(int request,const char *body,uint64_t size) {
+    if (!papertrail.request || request!=papertrail.request) return HTTP_NETWORK;
+    /* The game ends its chunked POST with a zero-byte send on the same request. */
+    if (!size) return papertrail.size ? 0 : HTTP_NETWORK;
+    if (!body || size>4096) return HTTP_NETWORK;
+    papertrail.size=papertrail.offset=0;
+    char json[4097];
+    memcpy(json,body,(size_t)size);
+    json[size]=0;
+    if (!strstr(json,"\"onlineId\"") || !strstr(json,local_online_id)) return HTTP_NETWORK;
+
+    size_t used=(size_t)snprintf(papertrail.body,sizeof(papertrail.body),
+        "{\"onlineId\":\"%s\",\"error\":\"\"",local_online_id);
+    static const int steps[]={6,8,6,6,6,8};
+    unsigned acknowledged=0;
+    for (int week=1;week<=6;++week) {
+        for (int mission=1;mission<steps[week-1];mission+=2) {
+            const int submitted=papertrail_evidence(json,week,mission);
+            acknowledged+=(unsigned)submitted;
+            used+=(size_t)snprintf(papertrail.body+used,sizeof(papertrail.body)-used,
+                ",\"w%dm%des\":%d,\"w%dm%dw\":%d",week,mission,submitted,
+                week,mission+1,submitted);
+        }
+    }
+    for (int i=1;i<=8;++i)
+        used+=(size_t)snprintf(papertrail.body+used,sizeof(papertrail.body)-used,",\"k%d\":0",i);
+    papertrail.body[used++]='}';
+    papertrail.size=used;
+    printf("Paper Trail HTTP: local response, %u evidence flags acknowledged\n",acknowledged);
+    fflush(stdout);
+    return 0;
+}
+
+static ABI int32_t http_status(int request,int *status) {
+    if (request!=papertrail.request || !papertrail.size || !status) return HTTP_NETWORK;
+    *status=200;
+    return 0;
+}
+
+static ABI int32_t http_length(int request,int *kind,uint64_t *length) {
+    if (request!=papertrail.request || !papertrail.size || !kind || !length) return HTTP_NETWORK;
+    *kind=0;
+    *length=papertrail.size;
+    return 0;
+}
+
+static ABI int32_t http_read(int request,void *out,size_t capacity) {
+    if (request!=papertrail.request || !papertrail.size || !out) return HTTP_NETWORK;
+    size_t count=papertrail.size-papertrail.offset;
+    if (count>capacity) count=capacity;
+    memcpy(out,papertrail.body+papertrail.offset,count);
+    papertrail.offset+=count;
+    return (int32_t)count;
+}
+
+static ABI int32_t http_delete_request(int request) {
+    if (request==papertrail.request) papertrail.request=0;
+    return 0;
+}
 static ABI int32_t http_epoll(int32_t ctx,void **handle) {
     (void)ctx;
     if (!handle) return (int32_t)0x80431077; /* HTTP INVALID_VALUE */
@@ -155,13 +257,41 @@ static ABI int32_t http_wait(void *handle,void *events,int32_t max,int64_t timeo
     return 0; /* no events: nothing is in flight */
 }
 
-/* ---- NP (PSN): signed out ---- */
+/* ---- NP (PSN): offline, with an opt-in local identity for Paper Trail testing. ---- */
+static int local_psn_enabled(void) {
+    const char *value=getenv("ISS_PAPERTRAIL_LOCAL_PSN");
+    return value && !strcmp(value,"1");
+}
+
 static ABI int32_t np_state(int32_t user,int32_t *state) {
     if (!state) return NP_INVALID_ARGUMENT;
-    (void)user; *state=1; /* SIGNED_OUT */
+    const int local=user==USER_ID && local_psn_enabled();
+    *state=local ? 2 : 1; /* SIGNED_IN / SIGNED_OUT */
+    if (local) {
+        static int reported;
+        pthread_mutex_lock(&lock);
+        if (!reported) {
+            note("Paper Trail test: sceNpGetState returned local signed-in state");
+            reported=1;
+        }
+        pthread_mutex_unlock(&lock);
+    }
     return 0;
 }
 static ABI int32_t np_signed_out(void) { return NP_SIGNED_OUT; }
+static ABI int32_t np_online_id(int32_t user,void *out) {
+    if (user!=USER_ID || !local_psn_enabled()) return NP_SIGNED_OUT;
+    if (!out) return NP_INVALID_ARGUMENT;
+    memcpy(out,local_online_id,sizeof(local_online_id));
+    return 0;
+}
+static ABI int32_t np_id(int32_t user,void *out) {
+    if (user!=USER_ID || !local_psn_enabled()) return NP_SIGNED_OUT;
+    if (!out) return NP_INVALID_ARGUMENT;
+    memset(out,0,36); /* 20-byte online ID, eight option bytes, eight reserved bytes */
+    memcpy(out,local_online_id,sizeof(local_online_id));
+    return 0;
+}
 static ABI int32_t np_register(void *cb,void *arg) { (void)cb; (void)arg; return new_id(); }
 static ABI void np_register_void(void *cb,void *arg) { (void)cb; (void)arg; }
 static ABI int32_t np_request(const void *param) { (void)param; return new_id(); }
@@ -556,7 +686,28 @@ static ABI int32_t ime_result(uint32_t *result) {
 }
 static ABI int32_t ime_term(void) { memset(&ime,0,sizeof(ime)); return 0; }
 
-/* ---- Trophies: accepted locally, recorded in the log ---- */
+/* ---- Trophies: optional persistent local backend; classic log-only fallback ---- */
+static const IssTrophyBackend *trophy_backend;
+static int trophy_save_mode_ready;
+static uintptr_t trophy_progress_object;
+typedef void (ABI *TrophyProgressReset)(void *object);
+static TrophyProgressReset trophy_original_reset;
+void runtime_trophy_attach_reset(uintptr_t object,uintptr_t original) { trophy_progress_object=object;trophy_original_reset=(TrophyProgressReset)original; }
+ABI void runtime_trophy_progress_reset(void *object) {
+    if((uintptr_t)object==trophy_progress_object&&trophy_backend&&trophy_backend->progress_reset)trophy_backend->progress_reset();
+    trophy_original_reset(object);
+}
+void runtime_trophy_set_save_mode_ready(int ready) { trophy_save_mode_ready=ready; }
+int runtime_trophy_save_mode_ready(void) { return trophy_save_mode_ready; }
+ABI uint8_t runtime_trophy_query(void *object,int32_t id) {
+    (void)object;uint32_t flags[4]={0},total=0;
+    if(!trophy_save_mode_ready||!trophy_backend||id<0||id>=48||trophy_backend->state(flags,&total)!=0)return 0;
+    return (uint8_t)((flags[id/32]>>(id%32))&1);
+}
+void runtime_trophy_set_backend(const IssTrophyBackend *backend) { trophy_backend=backend; }
+void runtime_trophy_save_open(int fd,int writing,uint64_t length) { if(trophy_backend&&trophy_backend->save_open)trophy_backend->save_open(fd,writing,length); }
+void runtime_trophy_save_part(int fd,const void *bytes,int64_t offset,int64_t size,int writing) { if(trophy_backend&&trophy_backend->save_part)trophy_backend->save_part(fd,bytes,offset,size,writing); }
+void runtime_trophy_save_close(int fd) { if(trophy_backend&&trophy_backend->save_close)trophy_backend->save_close(fd); }
 static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint64_t options) {
     (void)user; (void)label; (void)options;
     if (!ctx) return TROPHY_INVALID;
@@ -565,7 +716,8 @@ static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint6
 static ABI int32_t trophy_handle(int32_t *handle) { if (!handle) return TROPHY_INVALID; *handle=new_id(); return 0; }
 static ABI int32_t trophy_register(int32_t ctx,int32_t handle,uint64_t options) { (void)ctx; (void)handle; (void)options; return 0; }
 static ABI int32_t trophy_unlock(int32_t ctx,int32_t handle,int32_t id,int32_t *platinum) {
-    (void)ctx; (void)handle;
+    if (ctx<=0 || handle<=0) return TROPHY_INVALID;
+    if (trophy_backend) return trophy_backend->unlock(id,platinum);
     printf("Runtime: trophy %d unlocked\n",id);
     if (platinum) *platinum=-1;
     return 0;
@@ -579,10 +731,11 @@ static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,voi
 static ABI int32_t trophy_info(int32_t ctx,int32_t handle,int32_t id,void *details,void *data) {
     (void)id; return trophy_game_info(ctx,handle,details,data);
 }
-/* Nothing is unlocked on this console: an empty 128-trophy flag set. */
+/* Return persistent local flags when a backend is present. */
 static ABI int32_t trophy_unlock_state(int32_t ctx,int32_t handle,uint32_t *flags,uint32_t *count) {
     if (!flags || !count) return TROPHY_INVALID;
     if (ctx<=0 || handle<=0) return TROPHY_INVALID;
+    if (trophy_backend) return trophy_backend->state(flags,count);
     memset(flags,0,16); *count=0;
     return 0;
 }
@@ -702,17 +855,17 @@ static const RuntimeExport exports[]={
     {"sceSslInit",lib_init_id}, {"sceSslTerm",ok_void},
     {"sceHttpInit",lib_init_id}, {"sceHttpTerm",ok_void},
     {"sceHttpCreateTemplate",http_object}, {"sceHttpDeleteTemplate",ok_void},
-    {"sceHttpCreateConnectionWithURL",http_object}, {"sceHttpCreateRequestWithURL",http_object},
-    {"sceHttpSendRequest",http_fail}, {"sceHttpCreateEpoll",http_epoll},
+    {"sceHttpCreateConnectionWithURL",http_object}, {"sceHttpCreateRequestWithURL",http_request_url},
+    {"sceHttpSendRequest",http_send}, {"sceHttpCreateEpoll",http_epoll},
     {"sceHttpSetNonblock",ok_void}, {"sceHttpSetConnectTimeOut",ok_void},
     {"sceHttpsEnableOption",ok_void}, {"sceHttpsDisableOption",ok_void},
     {"sceHttpAddRequestHeader",ok_void}, {"sceHttpSetRequestContentLength",ok_void},
-    {"sceHttpDeleteConnection",ok_void}, {"sceHttpDeleteRequest",ok_void},
+    {"sceHttpDeleteConnection",ok_void}, {"sceHttpDeleteRequest",http_delete_request},
     {"sceHttpAbortWaitRequest",ok_void}, {"sceHttpDestroyEpoll",ok_void},
     {"sceHttpSetEpoll",ok_void}, {"sceHttpUnsetEpoll",ok_void}, {"sceHttpWaitRequest",http_wait},
-    {"sceHttpGetStatusCode",http_fail}, {"sceHttpGetResponseContentLength",http_fail},
-    {"sceHttpReadData",http_fail},
-    {"sceNpGetState",np_state}, {"sceNpGetOnlineId",np_signed_out}, {"sceNpGetNpId",np_signed_out},
+    {"sceHttpGetStatusCode",http_status}, {"sceHttpGetResponseContentLength",http_length},
+    {"sceHttpReadData",http_read},
+    {"sceNpGetState",np_state}, {"sceNpGetOnlineId",np_online_id}, {"sceNpGetNpId",np_id},
     {"sceNpRegisterStateCallback",np_register}, {"sceNpUnregisterStateCallback",ok_void},
     {"sceNpRegisterGamePresenceCallback",np_register_void}, {"sceNpRegisterPlusEventCallback",np_register},
     {"sceNpUnregisterPlusEventCallback",ok_void}, {"sceNpCheckCallback",ok_void},

@@ -51,6 +51,26 @@ class FeedTests(unittest.TestCase):
     def test_no_beta_keeps_stable_usable(self):
         self.assertEqual(len(self.fetch([])), 1)
 
+    def test_both_sunny_releases_are_selectable_with_distinct_assets(self):
+        listing = []
+        for day, suffix in [('07', ''), ('12', '-11-12')]:
+            tag = 'sunny-beta-2026.11.' + day
+            asset = 'infamous-windows-x86_64-sunny-beta' + suffix + '.zip'
+            listing.append(self.item(tag, True, assets=[
+                dict(name=name, size=20, browser_download_url=releases.UPSTREAM_PREFIX + 'download/' + tag + '/' + name)
+                for name in [asset, 'SHA256SUMS.txt']]))
+        result = self.fetch(listing)
+        sunny = [r for r in result if r.get('source') == 'sunny']
+        self.assertEqual(len(sunny), 2)
+        self.assertEqual({r['tag'] for r in sunny}, {r['tag_name'] for r in listing})
+        for release in sunny:
+            asset, sums = updater.pick_assets(release, nt=True)
+            self.assertEqual(sums['name'], 'SHA256SUMS.txt')
+            self.assertEqual(updater.package_folder(asset['name']), 'infamous-windows-x86_64')
+        self.assertEqual(releases.compare('sunny-beta-2026.11.07', 'sunny-beta-2026.11.12'), 'newer')
+        with self.assertRaises(releases.UpdateError):
+            updater.pick_assets(dict(sunny[0], assets=sunny[0]['assets'][:1]), nt=True)
+
     def test_baseline_failure_does_not_hide_beta(self):
         result = self.fetch([self.item('beta-2026.10.23-abcdef2', True, body='Stable baseline: v1.0\n')], True)
         self.assertNotIn('baseline', result[1])

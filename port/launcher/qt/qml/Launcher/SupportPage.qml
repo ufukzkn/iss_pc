@@ -188,6 +188,17 @@ Item {
                             spacing: 10
                             GhostButton { compact: true; text: Theme.tr("sup_open_logs"); onClicked: Support.openLogsFolder() }
                         }
+                        Row {   // detailed log (ISS_VERBOSE_LOG), moved here from the Play tab (2026-11-11)
+                            spacing: 12
+                            Text { text: Theme.tr("verbose_log"); color: Theme.textMuted; font.family: Theme.fontText; font.pixelSize: 13; font.weight: Font.Bold
+                                   anchors.verticalCenter: parent.verticalCenter }
+                            Toggle {
+                                accent: page.accent
+                                checked: Backend.verboseLog
+                                onToggled: (v) => Backend.setVerboseLog(v)
+                            }
+                        }
+                        Body { text: Theme.tr("verbose_log_hint") }
                     }
 
                     // step 3: send

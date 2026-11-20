@@ -13,7 +13,7 @@ from .releases import UpdateError, parse_version, _same_commit
 import update_install
 
 MARKER = '.iss-beta.json'
-TAG = re.compile(r'beta-[0-9A-Za-z](?:[0-9A-Za-z.+_-]{0,93}[0-9A-Za-z])?$')
+TAG = re.compile(r'(?:sunny-)?beta-[0-9A-Za-z](?:[0-9A-Za-z.+_-]{0,93}[0-9A-Za-z])?$')
 
 
 def folder(root, tag):
@@ -82,7 +82,11 @@ def install(archive, root, release, exe, progress=None):
             manifest, entries = update_install._check_payload(stage, progress=progress)
             package_version = (stage / 'VERSION').read_text(encoding='utf-8').strip()
             matches = package_version == release['tag']
-            if release.get('source') == 'upstream':
+            if release.get('source') == 'sunny':
+                # Published Sunny packages retain the documented upstream VERSION.
+                # The selected release asset is independently checked by SHA256SUMS.
+                matches = package_version == 'v2026.10.28-3722737'
+            elif release.get('source') == 'upstream':
                 actual, expected = parse_version(package_version), parse_version(release['tag'])
                 matches = (actual != 'bad' and expected != 'bad' and
                            _same_commit(actual[1], expected[1]))

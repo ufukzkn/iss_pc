@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
 #include <cstdlib>
 #include <boost/container/static_vector.hpp>
 #include <fmt/format.h>
@@ -16,6 +17,8 @@
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "infamous_renderer/native_instanced_feature.h"
 #include "native_gbuffer.h"
+#include "iss_temporal_dlss.h"
+#include "shader_salt.h"
 
 #include <vk_mem_alloc.h>
 
@@ -26,10 +29,15 @@ bool readback = false;
 /// ISS_READBACK_FAMILY (default on, without asc_queue): the readback queue alone on a queue of a
 /// compute-only family. ~0 otherwise.
 u32 readback_family = ~0u;
+/// ISS_UPLOAD_QUEUE=1 (default off): the transfer-only family (copy engine) whose queue moves the
+/// CPU-to-GPU uploads into device memory while the graphics queue renders. ~0 otherwise.
+u32 upload_family = ~0u;
 thread_local u32 pool_family = ~0u;
 }
 
 namespace Vulkan {
+extern bool g_iss_surface_capabilities2;
+bool g_iss_full_screen_exclusive=false;
 
 /// GPU black box (gpu_blackbox.h, ISS_GPU_BLACKBOX unless =0): VK_AMD_buffer_marker enabled.
 bool g_iss_amd_buffer_marker = false;
@@ -37,6 +45,10 @@ bool g_iss_amd_buffer_marker = false;
 /// ISS_NATIVE_RECORDER: VK_KHR_maintenance7 enabled (renderings mixing inline and secondary
 /// command buffers).
 bool g_iss_maintenance7 = false;
+// ISS_NO_ROBUST_SHADERS (shader_salt.h): VK_EXT_pipeline_robustness, enabled only when that list is set.
+bool g_iss_pipeline_robustness = false;
+// ISS_SHADER_STATS (shader_salt.h): VK_KHR_pipeline_executable_properties, only when that list is set.
+bool g_iss_pipeline_stats = false;
 
 namespace {
 
@@ -232,7 +244,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
         vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
-        vk::PhysicalDeviceFaultFeaturesEXT>();
+        vk::PhysicalDeviceFaultFeaturesEXT, vk::PhysicalDevicePipelineRobustnessFeaturesEXT,
+        vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -250,7 +263,7 @@ bool Instance::CreateDevice() {
         return false;
     }
 
-    boost::container::static_vector<const char*, 32> enabled_extensions;
+    boost::container::static_vector<const char*, 48> enabled_extensions;
     const auto add_extension = [&](std::string_view extension) -> bool {
         const auto result =
             std::find_if(available_extensions.begin(), available_extensions.end(),
@@ -269,6 +282,9 @@ bool Instance::CreateDevice() {
     // Required
     ASSERT_MSG(add_extension(VK_KHR_SWAPCHAIN_EXTENSION_NAME),
                "Required Vulkan extension unavailable: {}", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#ifdef _WIN32
+    g_iss_full_screen_exclusive=g_iss_surface_capabilities2 && add_extension("VK_EXT_full_screen_exclusive");
+#endif
     ASSERT_MSG(add_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME),
                "Required Vulkan extension unavailable: {}", VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
     ASSERT_MSG(add_extension(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME),
@@ -276,6 +292,10 @@ bool Instance::CreateDevice() {
                VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
     ASSERT_MSG(add_extension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME),
                "Required Vulkan extension unavailable: {}", VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    // NVIDIA DLSS (iss_temporal_backend=1 with the player's DLLs): the extensions NGX needs. Empty otherwise.
+    for (const std::string& name : IssTemporal::Dlss::RequiredDeviceExtensions(*instance, physical_device)) {
+        add_extension(name);
+    }
 
     const auto robustness2_features = feature_chain.get<vk::PhysicalDeviceRobustness2FeaturesEXT>();
     ASSERT_MSG(robustness2_features.robustBufferAccess2,
@@ -286,6 +306,23 @@ bool Instance::CreateDevice() {
                "Required Vulkan feature unavailable: nullDescriptor");
 
     // Optional
+    g_iss_pipeline_robustness =
+        !iss::no_robust::Listed().empty() &&
+        feature_chain.get<vk::PhysicalDevicePipelineRobustnessFeaturesEXT>().pipelineRobustness &&
+        add_extension(VK_EXT_PIPELINE_ROBUSTNESS_EXTENSION_NAME);
+    if (!iss::no_robust::Listed().empty()) {
+        std::fprintf(stderr, "PORT_TUNING no_robust_shaders=%zu available=%d\n",
+                     iss::no_robust::Listed().size(), int(g_iss_pipeline_robustness));
+    }
+    g_iss_pipeline_stats =
+        !iss::shader_stats::Listed().empty() &&
+        feature_chain.get<vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>()
+            .pipelineExecutableInfo &&
+        add_extension(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+    if (!iss::shader_stats::Listed().empty()) {
+        std::fprintf(stderr, "PORT_TUNING shader_stats=%zu available=%d\n",
+                     iss::shader_stats::Listed().size(), int(g_iss_pipeline_stats));
+    }
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     // ISS_NATIVE_RECORDER: secondary command buffers recorded by the engine threads run inside
@@ -420,7 +457,7 @@ bool Instance::CreateDevice() {
     const u32 family_queues = family_properties[queue_family_index].queueCount;
     has_readback_queue = family_queues >= 2;
     has_compute_queue = family_queues >= 3;
-    std::array<vk::DeviceQueueCreateInfo, 2> queue_infos{};
+    std::array<vk::DeviceQueueCreateInfo, 3> queue_infos{};
     u32 num_queue_infos = 1;
     queue_infos[0] = vk::DeviceQueueCreateInfo{
         .queueFamilyIndex = queue_family_index,
@@ -478,6 +515,31 @@ bool Instance::CreateDevice() {
             }
         }
     }
+    // ISS_UPLOAD_QUEUE=1: a queue of a transfer-only family (the copy engine) for the uploads
+    // (BufferCache::UploadQueue). Buffers are then shared concurrently with it too.
+    if (env_on("ISS_UPLOAD_QUEUE", false)) {
+        for (std::size_t i = 0; i < family_properties.size(); i++) {
+            const auto flags = family_properties[i].queueFlags;
+            constexpr auto engines = vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute |
+                                     vk::QueueFlagBits::eVideoDecodeKHR |
+                                     vk::QueueFlagBits::eVideoEncodeKHR |
+                                     vk::QueueFlagBits::eOpticalFlowNV;
+            if ((flags & vk::QueueFlagBits::eTransfer) && !(flags & engines) &&
+                family_properties[i].queueCount > 0 && i != queue_family_index) {
+                iss::asc_family::upload_family = static_cast<u32>(i);
+                iss::asc_family::graphics = queue_family_index;
+                queue_infos[num_queue_infos++] = vk::DeviceQueueCreateInfo{
+                    .queueFamilyIndex = static_cast<u32>(i),
+                    .queueCount = 1,
+                    .pQueuePriorities = queue_priorities.data(),
+                };
+                break;
+            }
+        }
+        std::fprintf(stderr, "PORT_UPLOAD_QUEUE family %d\n",
+                     iss::asc_family::upload_family == ~0u ? -1
+                                                           : int(iss::asc_family::upload_family));
+    }
 
     const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = feature_chain.get<vk::PhysicalDeviceVulkan12Features>();
@@ -526,6 +588,9 @@ bool Instance::CreateDevice() {
                 .shaderImageGatherExtended = features.shaderImageGatherExtended,
                 .shaderStorageImageExtendedFormats = features.shaderStorageImageExtendedFormats,
                 .shaderStorageImageMultisample = features.shaderStorageImageMultisample,
+                // FSR 3 (gpu/iss_temporal_upscaler.cpp) writes its accumulate output to storage images
+                // without a declared format.
+                .shaderStorageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat,
                 .shaderClipDistance = features.shaderClipDistance,
                 .shaderFloat64 = features.shaderFloat64,
                 .shaderInt64 = features.shaderInt64,
@@ -642,7 +707,19 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceFaultFeaturesEXT{
             .deviceFault = true,
         },
+        vk::PhysicalDevicePipelineRobustnessFeaturesEXT{
+            .pipelineRobustness = true,
+        },
+        vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+            .pipelineExecutableInfo = true,
+        },
     };
+    if (!g_iss_pipeline_robustness) {
+        device_chain.unlink<vk::PhysicalDevicePipelineRobustnessFeaturesEXT>();
+    }
+    if (!g_iss_pipeline_stats) {
+        device_chain.unlink<vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>();
+    }
 
     if (!custom_border_color) {
         device_chain.unlink<vk::PhysicalDeviceCustomBorderColorFeaturesEXT>();
@@ -708,6 +785,7 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    IssTemporal::Dlss::Initialize(*instance, physical_device, *device);
     iss::native_geometry::RegisterIndirectFirstInstanceFeature(
         *this, request_indirect_first_instance && features.drawIndirectFirstInstance);
     if (request_indirect_first_instance && features.drawIndirectFirstInstance) {
@@ -724,6 +802,9 @@ bool Instance::CreateDevice() {
         has_readback_queue = true;
     } else if (has_readback_queue) {
         readback_queue = device->getQueue(queue_family_index, 1);
+    }
+    if (iss::asc_family::upload_family != ~0u) {
+        upload_queue = device->getQueue(iss::asc_family::upload_family, 0);
     }
     if (iss::asc_family::family != ~0u) {
         compute_queue = device->getQueue(iss::asc_family::family, 0);

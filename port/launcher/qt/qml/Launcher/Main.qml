@@ -8,7 +8,9 @@ Rectangle {
     implicitWidth: 1120
     implicitHeight: 700
     property int current: 0
-    readonly property var pages: ["play", "graphics", "controls", "fixes", "saves", "guides", "support", "updates", "advanced", "mods"]
+    // The rail's order (Rail.qml entries): Play, Graphics, Mods, Controls, Controller guides,
+    // Saves & data, Updates, Support, Advanced, Fixes.
+    readonly property var pages: ["play", "graphics", "mods", "controls", "guides", "saves", "updates", "support", "advanced", "fixes"]
     property bool animate: true
 
     Rail {
@@ -26,6 +28,11 @@ Rectangle {
             Item {
                 id: slot
                 readonly property bool on: root.current === index
+                // A page is built the first time it is shown and then kept (its scroll and state stay);
+                // building all ten at start made every state change reach ten pages' bindings.
+                property bool visited: false
+                onOnChanged: if (on) visited = true
+                Component.onCompleted: if (on) visited = true
                 width: stage.width; height: stage.height
                 opacity: on ? 1 : 0
                 visible: opacity > 0.01
@@ -34,6 +41,7 @@ Rectangle {
                 Behavior on y { enabled: root.animate; NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 Loader {
                     anchors.fill: parent
+                    active: slot.visited
                     sourceComponent: { var k = root.pages[index]
                         return k === "play" ? home : k === "graphics" ? graphics : k === "controls" ? controls
                              : k === "fixes" ? fixes : k === "saves" ? saves : k === "guides" ? guides
@@ -44,7 +52,7 @@ Rectangle {
             }
         }
     }
-    Component { id: home; HomePage { animate: root.animate; onOpenFixes: root.current = 3; onOpenSaves: root.current = 4 } }
+    Component { id: home; HomePage { animate: root.animate; onOpenFixes: root.current = root.pages.indexOf("fixes"); onOpenSaves: root.current = root.pages.indexOf("saves") } }
     Component { id: graphics; GraphicsPage { } }
     Component { id: controls
         ControlsPage { guidesShown: root.pages.indexOf("guides") >= 0

@@ -1,7 +1,17 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
+#include <cstdlib>
+#include <deque>
+#include <thread>
+#include <immintrin.h>
 #include "common/debug.h"
+#include "../../../src/iss_native_resolution.h"
+#include "../../../src/iss_menu_aspect.h"
+#include "../../../src/iss_power_wheel.h"
+extern "C" int runtime_pause_menu_fit_enabled(void); // runtime_hud_corners.c (ISS_PAUSE_MENU_FIT=0 turns off)
+extern "C" int runtime_pause_menu_fitted_now(void);
 #include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
@@ -15,10 +25,12 @@
 #include "core/libraries/system/systemservice.h"
 #include "core/perf_sampler.h"
 #include "imgui/friends_layer.h"
+#include "iss_temporal_upscaler.h"
 #include "imgui/invitation_prompt_layer.h"
 #include "imgui/notifications_layer.h"
 #include "imgui/renderer/imgui_core.h"
 #include "tlg_overlay.h"
+#include "tlg_settings.h"
 #include "imgui/renderer/imgui_impl_vulkan.h"
 #include "imgui/shadnet_notifications_layer.h"
 #include "sdl_window.h"
@@ -677,6 +689,10 @@ static vk::Format GetFrameViewFormat(const Libraries::VideoOut::PixelFormat form
 
 Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& attribute,
                                VAddr cpu_address) {
+    // The draws of the frame must all be recorded before the redirection ends.
+    if (IssTemporal::Redirecting()) {
+        rasterizer->DrainDrawPipe(5);
+    }
     auto desc = VideoCore::TextureCache::ImageDesc{attribute, cpu_address};
     const auto image_id = texture_cache.FindImage(desc);
     texture_cache.UpdateImage(image_id);
@@ -713,7 +729,12 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         const char* value = std::getenv("ISS_PRESENT_STREAM");
         return value && value[0] == '1';
     }();
-    const bool streamed = present_stream && !fsr_settings.enable &&
+    // inFAMOUS drawn below the output size by the temporal upscaler: the frame is in an output-size image of
+    // its own (the guest's buffer holds the render-size version). Asks for it for every flip: that also ends
+    // the redirection of the draws.
+    IssTemporal::DisplayImage ui_display;
+    const bool ui_override = IssTemporal::DisplayOverride(cpu_address, ui_display);
+    const bool streamed = present_stream && !fsr_settings.enable && !ui_override &&
                           !draw_scheduler.DirectCommandBuffer();
     vk::CommandBuffer cmdbuf{};
     if (!streamed) {
@@ -731,8 +752,32 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
 
     auto& image = texture_cache.GetImage(image_id);
     auto image_view = *image.FindView(view_info).image_view;
-    const vk::Extent2D image_size = {image.info.size.width, image.info.size.height};
+    vk::Extent2D image_size = {image.info.size.width, image.info.size.height};
+    if (ui_override) {
+        // A copy of the output-size image in the layout the passes sample; the image itself stays in General.
+        vk::ComponentMapping ui_mapping{};
+        ui_mapping.a = vk::ComponentSwizzle::eOne;
+        const vk::ImageView ui_view = streamed ? vk::ImageView{} : IssTemporal::RecordDisplayCopy(
+            cmdbuf, ui_display, GetFrameViewFormat(attribute.attrib.pixel_format), ui_mapping);
+        if (ui_view) {
+            image_view = ui_view;
+            image_size = vk::Extent2D{ui_display.width, ui_display.height};
+        } else {
+            LOG_WARNING(Render_Vulkan, "IssTemporal: the output-size frame could not be presented, showing the guest's buffer");
+        }
+        // The twin stays alive until the commands that read it are done.
+        draw_scheduler.DeferOperation([keep = std::move(ui_display.keep)] {});
+    }
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);
+    static vk::Extent2D native_last_size{};
+    if(runtime_native_status()==1 && native_last_size!=image_size){
+        std::fprintf(stderr,"NATIVE_GUEST_OUTPUT %ux%u (before host FSR/post-processing)\n",image_size.width,image_size.height);
+        if(const char* trace=std::getenv("ISS_NATIVE_LIGHT_TRACE");trace&&trace[0]=='1')
+            std::fprintf(stderr,"NATIVE_COLOR_FORMAT guest=%u image=%u view=%u hdr=%d srgb10=%d fsr=%d frame=%ux%u\n",
+                unsigned(attribute.attrib.pixel_format),unsigned(image.info.pixel_format),unsigned(view_info.format),int(frame->is_hdr),
+                int(attribute.attrib.pixel_format==Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb),int(fsr_settings.enable),frame->width,frame->height);
+        native_last_size=image_size;
+    }
 
     // Explicit guest-output ordinals, independent of wall-clock preload duration.
     // Opt-in test capture only; unchanged dimensions and full original render output.
@@ -792,7 +837,6 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
                     vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
     runtime.FlushBarriers();
-
     // Vulkan has no sRGB variant of the 10-bit format, so an A2R10G10B10Srgb buffer reaches
     // the post process pass still sRGB encoded and has to be decoded there instead.
     pp_settings.srgb_input =
@@ -830,6 +874,82 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     frame->ready_tick = draw_scheduler.CurrentTick();
     SubmitInfo info{};
     draw_scheduler.Flush(info);
+
+    // ISS_FRAMES_AHEAD=N (opt-in, 0/unset off; from SpartanPort's SPARTAN_FRAMES_AHEAD): the
+    // command processor runs at most N guest frames ahead of the GPU, waiting here for the frame
+    // N flips back. When the GPU limits, unbounded run-ahead blocks wherever a resource runs out
+    // and flips come in bursts (2026-10-29: 43-45% of frames >1.6x their neighbour).
+    static const u32 frames_ahead = [] {
+        const char* p = std::getenv("ISS_FRAMES_AHEAD");
+        const u32 n = p ? u32(std::strtoul(p, nullptr, 10)) : 0u;
+        std::fprintf(stderr, "PORT_TUNING frames_ahead=%u\n", n);
+        return n;
+    }();
+    if (frames_ahead) {
+        static std::deque<u64> recent_ticks;
+        static u64 waited_ns = 0, frames = 0;
+        recent_ticks.push_back(frame->ready_tick);
+        while (recent_ticks.size() > frames_ahead) {
+            const u64 tick = recent_ticks.front();
+            recent_ticks.pop_front();
+            if (recent_ticks.size() == frames_ahead) {
+                const u64 start = Common::Perf::NowNs();
+                draw_scheduler.Wait(tick);
+                waited_ns += Common::Perf::NowNs() - start;
+            }
+        }
+        if (++frames % 600 == 0) {
+            std::fprintf(stderr, "FRAMES_AHEAD n=%u waited_ms_per_frame=%.2f\n", frames_ahead,
+                         double(waited_ns) / 1e6 / 600.0);
+            waited_ns = 0;
+        }
+    }
+
+    // ISS_FPS_LIMIT=N (diagnostic, opt-in): guest frames are handed over at most N per second,
+    // evenly spaced, by a timer here. The player's "Frame rate limit" (tlg.ini fps_limit) is
+    // applied by the vblank loop instead (videoout_driver.cpp), where flips snap to the vblank
+    // grid: this timer alone left 4% of capped frames at 20.8 ms (one tick late, 2026-11-05).
+    // A frame later than one period re-anchors the cadence instead of catching up with a burst.
+    static const double limit_fps = [] {
+        const char* p = std::getenv("ISS_FPS_LIMIT");
+        const double fps = p && *p ? std::strtod(p, nullptr) : 0.0;
+        if (fps > 0.0) std::fprintf(stderr, "PORT_TUNING fps_limit=%.1f (ISS_FPS_LIMIT)\n", fps);
+        return fps;
+    }();
+    const u64 limit_period_ns =
+        limit_fps >= 20.0 && limit_fps <= 1000.0 ? u64(1e9 / limit_fps) : 0;
+    static u64 next_ns = 0;
+    if (limit_period_ns) {
+        static u64 slept_ns = 0, late = 0, limited = 0;
+        u64 now = Common::Perf::NowNs();
+        if (next_ns && now < next_ns) {
+            const u64 start = now;
+            // Windows sleeps overshoot by up to a few ms (timer resolution): sleep only until
+            // ~3 ms before the deadline, spin the rest (2026-11-05: with 1.5 ms, 2% of capped
+            // frames came out ~20 ms instead of 16.7).
+            constexpr u64 spin_ns = 3'000'000;
+            if (next_ns - now > spin_ns) {
+                std::this_thread::sleep_for(std::chrono::nanoseconds(next_ns - now - spin_ns));
+            }
+            while ((now = Common::Perf::NowNs()) < next_ns) {
+                _mm_pause();
+            }
+            slept_ns += now - start;
+        }
+        if (next_ns && now - next_ns < limit_period_ns) {
+            next_ns += limit_period_ns; // on time or slightly late: keep the cadence
+        } else {
+            late += next_ns != 0;
+            next_ns = now + limit_period_ns; // first frame or a long frame: re-anchor
+        }
+        if (++limited % 600 == 0) {
+            std::fprintf(stderr, "FPS_LIMIT %.1f fps: waited %.2f ms/frame, re-anchored %llu of 600\n",
+                         1e9 / double(limit_period_ns), double(slept_ns) / 1e6 / 600.0,
+                         (unsigned long long)late);
+            slept_ns = 0;
+            late = 0;
+        }
+    }
     return frame;
 }
 
@@ -926,12 +1046,16 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     };
 
-    // Recreate the swapchain if the window was resized.
-    if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight()) {
+    // Do not acquire/reset a presentation fence while exclusive focus is lost,
+    // the window is minimized, or SDL is changing display modes.
+    if(!swapchain.SyncExclusiveState()) {free_frame();return;}
+    if (swapchain.NeedsRecreation() || window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
+    if(!swapchain.SyncExclusiveState()) {free_frame();return;}
 
     if (!swapchain.AcquireNextImage()) {
+        if(!swapchain.NeedsRecreation() || !window.CanPresent()){free_frame();return;}
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         if (!swapchain.AcquireNextImage()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
@@ -1056,8 +1180,35 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 ImVec2 contentArea = ImGui::GetContentRegionAvail();
                 SetExpectedGameSize((s32)contentArea.x, (s32)contentArea.y);
 
-                const auto imgRect =
-                    FitImage(game_width, game_height, (s32)contentArea.x, (s32)contentArea.y);
+                // Guarded pause presentation only. Keep guest targets,
+                // widget transforms, world projection and gameplay HUD intact.
+                static const bool pause_fit=[] {
+                    const char* p=std::getenv("ISS_EXPERIMENTAL_PAUSE_PRESENTATION");
+                    return iss_menu_presentation_option(p);
+                }();
+                static thread_local unsigned gameplay_seen=0;
+                bool fit_menu=false;
+                // The recognised pause menu is drawn at 16:9 itself (runtime_hud_corners.c): while it is,
+                // the whole picture is not boxed. Unrecognised paused screens keep the centred 16:9 view.
+                // Wide UI canvas (iss_native_ui_16_9=0): the game lays its menus out for the screen's own
+                // shape, so boxing them to 16:9 only made them tall and added bars (2026-11-07 test: menus
+                // right with the box off). The box is for the 16:9 UI canvas only.
+                const bool ui_canvas_16_9=runtime_native_status()==1&&runtime_native_plan()->ui_16_9!=0;
+                if(pause_fit&&ui_canvas_16_9&&!(runtime_pause_menu_fit_enabled()&&runtime_pause_menu_fitted_now())&&
+                   runtime_native_status()==1&&!Libraries::SystemService::IsSplashVisible()){
+                    IssPowerWheelStatus status;runtime_power_wheel_status(&status);
+                    // The pause counter only: a cutscene is not a pause menu (2026-11-06).
+                    const bool paused=iss_menu_pause_gate(&gameplay_seen,status.supported,status.ready,
+                        runtime_power_wheel_unpaused());
+                    fit_menu=iss_menu_presentation_fit(game_width,game_height,paused);
+                }
+                static thread_local bool previous_fit=false;
+                if(fit_menu!=previous_fit){
+                    std::fprintf(stderr,"PAUSE_PRESENTATION centered_16_9=%d; gameplay targets unchanged\n",fit_menu);
+                    previous_fit=fit_menu;
+                }
+                const auto imgRect = FitImage(fit_menu?16:game_width,fit_menu?9:game_height,
+                    (s32)contentArea.x,(s32)contentArea.y);
                 ImVec2 offset{
                     static_cast<float>(imgRect.offset.x),
                     static_cast<float>(imgRect.offset.y),
@@ -1171,12 +1322,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         frame->ready_tick,reinterpret_cast<u64>(&scheduler),0,0,0,trace_flushed-trace_flush);
 
     // Present to swapchain.
+    bool recreate_after_present=false;
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present()) {
-            swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        }
+        recreate_after_present=!swapchain.Present();
     }
+    // Queue drain submits take submit_mutex themselves and wait outside it.
+    if(recreate_after_present && window.CanPresent())swapchain.Recreate(window.GetWidth(),window.GetHeight());
 
     if(trace_start)iss::timeline::Emit("present_end",reinterpret_cast<u64>(frame),frame->ready_tick,
         is_reusing_frame,is_game_frame,trace_acquired-trace_start,

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -86,6 +87,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.key_map = value;
         return;
     }
+    if (key == "key_binds") {
+        SetKeyBinds(value);
+        return;
+    }
+    if (key == "dlss_dll_dir") {
+        v.dlss_dll_dir = value;
+        return;
+    }
     if (key == "lod_bands") {
         // Six comma-separated distances; missing or bad entries keep the current value.
         const char* p = value.c_str();
@@ -130,6 +139,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mouse_enabled = i != 0;
     } else if (key == "mouse_invert_y") {
         v.mouse_invert_y = i != 0;
+    } else if (key == "rumble") {
+        v.rumble = i != 0;
     } else if (key == "mouse_sensitivity") {
         v.mouse_sensitivity = Clamp(value.empty() ? 1.0f : f, 0.05f, 10.0f);
     } else if (key == "mouse_smoothing") {
@@ -160,6 +171,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.display_mode = TlgGraphics::ParseDisplayMode(value);
     } else if (key == "vsync") {
         v.vsync = i != 0;
+    } else if (key == "vsync_relaxed") {
+        v.vsync_relaxed = i != 0;
     } else if (key == "fps_limit") {
         v.fps_limit = TlgGraphics::ParseFpsLimit(i);
     } else if (key == "async_shaders") {
@@ -172,6 +185,31 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.rcas_strength = TlgGraphics::ParseRcasStrength(value.empty() ? -1 : i);
     } else if (key == "frames_queued") {
         v.frames_queued = TlgGraphics::ParseFramesQueued(value.empty() ? -1 : i);
+    } else if (key == "iss_native_output") {
+        v.iss_native_output = std::clamp(i,0,7);
+    } else if (key == "iss_native_percent") {
+        v.iss_native_percent = std::clamp(i,25,200);
+    } else if (key == "iss_native_hud_edges") {
+        v.iss_native_hud_edges = i != 0;
+    } else if (key == "iss_temporal") {
+        v.iss_temporal = i != 0;
+    } else if (key == "iss_temporal_mode") {
+        v.iss_temporal_mode = std::clamp(i, 0, 4);
+    } else if (key == "iss_temporal_backend") {
+        v.iss_temporal_backend = std::clamp(i, 0, 1);
+    } else if (key == "iss_power_glow") {
+        v.iss_power_glow=std::clamp(f,0.5f,3.0f);
+    } else if (key == "iss_power_instant") {
+        v.iss_power_instant=i!=0;
+    } else if (key == "iss_pad_speaker") {
+        v.iss_pad_speaker=i!=0;
+    } else if (key == "iss_power_switch_enabled") {
+        v.iss_power_switch_enabled=i!=0;
+    } else if (key == "iss_power_key_smoke" || key == "iss_power_key_neon" || key == "iss_power_key_video" || key == "iss_power_key_concrete") {
+        int index=key=="iss_power_key_smoke"?0:key=="iss_power_key_neon"?1:key=="iss_power_key_video"?2:3;
+        v.iss_power_keys[index]=std::clamp(i,0,511);
+    } else if (key == "iss_native_ui_16_9") {
+        v.iss_native_ui_16_9 = std::clamp(i,0,2);
     } else if (key == "render_resolution") {
         v.render_resolution = TlgGraphics::ParseResolution(value);
     } else if (key == "engine_fps") {
@@ -196,6 +234,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.blue_orb_multiplier = TlgOrbs::ClampMultiplier(f);
     } else if (key == "gold_orb_multiplier") {
         v.gold_orb_multiplier = TlgOrbs::ClampMultiplier(f);
+    } else if (key == "quality_target_fps") {
+        v.quality_target_fps = i <= 0 ? 0 : std::clamp(i, 20, 240);
+    } else if (key == "quality_floor") {
+        v.quality_floor = std::clamp(i, 0, 14);
+    } else if (key == "draw_budget") {
+        v.draw_budget = std::clamp(i, 10, 100);
+    } else if (key == "dyn_cull") {
+        v.dyn_cull = std::clamp(i, 0, 2);
     } else if (key == "lod_scale") {
         v.lod_scale = TlgView::ClampLodScale(f);
     } else if (key == "region_lod") {
@@ -228,6 +274,19 @@ void Set(Values& v, const std::string& key, const std::string& value) {
 Values& Get() {
     static Values values;
     return values;
+}
+
+static std::mutex& KeyBindsLock() {
+    static std::mutex lock;
+    return lock;
+}
+std::string KeyBinds() {
+    std::scoped_lock guard{KeyBindsLock()};
+    return Get().key_binds;
+}
+void SetKeyBinds(const std::string& value) {
+    std::scoped_lock guard{KeyBindsLock()};
+    Get().key_binds = value;
 }
 
 void Load() {
@@ -263,8 +322,11 @@ void Load() {
         {"TLG_RCAS", "rcas"},                        {"TLG_FRAMES_AHEAD", "frames_queued"},
         {"TLG_SHOW_FPS", "show_fps"},             {"TLG_SENSOR_AIM", "sensor_aim"},
         {"TLG_MOUSE", "mouse_enabled"},           {"TLG_MOUSE_SENS", "mouse_sensitivity"},
-        {"TLG_MOUSE_INVERT_Y", "mouse_invert_y"}, {"TLG_MOUSE_SMOOTHING", "mouse_smoothing"},
-        {"TLG_MOUSE_ACCEL", "mouse_accel"},       {"TLG_MOUSE_DEADZONE", "mouse_deadzone"},
+        {"TLG_MOUSE_INVERT_Y", "mouse_invert_y"},
+        {"TLG_RUMBLE", "rumble"},
+        {"TLG_DYN_CULL", "dyn_cull"},             {"TLG_DRAW_BUDGET", "draw_budget"},   {"TLG_QUALITY_FLOOR", "quality_floor"},
+        {"TLG_QUALITY_TARGET_FPS", "quality_target_fps"}, {"TLG_ISS_TEMPORAL", "iss_temporal"},
+        {"TLG_ISS_TEMPORAL_BACKEND", "iss_temporal_backend"}, {"TLG_ISS_TEMPORAL_MODE", "iss_temporal_mode"}, {"TLG_DLSS_DIR", "dlss_dll_dir"},
         {"TLG_GYRO_AIM", "gyro_aim"},             {"TLG_GYRO_INVERT_Y", "gyro_invert_y"},
         {"TLG_STICK_LOOK_SENS", "stick_look_sensitivity"},
         {"TLG_GYRO_SENS", "gyro_sensitivity"},     {"TLG_GYRO_SMOOTHING", "gyro_smoothing"},
@@ -356,7 +418,7 @@ void Save() {
         return;
     }
     std::fprintf(file,
-                 "# tlg settings (in-game menu: Insert / R3+L2)\n"
+                 "# tlg settings (in-game menu: F1 / R3+L2)\n"
                  "upscaler=%s\npreset=%d\nsharpen=%d\nsharpness=%.2f\njitter=%d\n"
                  "reactive=%d\nobject_motion=%d\nreactive_scale=%.2f\nreactive_threshold=%.2f\nreactive_max=%.2f\n"
                  "debug_view=%d\nshow_fps=%d\nfsr4_auto_exposure=%d\nfsr4_invert_jitter=%d\n",
@@ -367,6 +429,16 @@ void Save() {
                  v.debug_view.load(), int(v.show_fps.load()),
                  int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
     std::fprintf(file, "output_res=%dx%d\n", OutputWidths[v.output_res], OutputHeights[v.output_res]);
+    std::fprintf(file, "iss_native_output=%d\niss_native_percent=%d\niss_native_hud_edges=%d\n",
+                 v.iss_native_output.load(),v.iss_native_percent.load(),int(v.iss_native_hud_edges.load()));
+    std::fprintf(file, "iss_native_ui_16_9=%d\n",int(v.iss_native_ui_16_9.load()));
+    std::fprintf(file, "iss_temporal=%d\niss_temporal_mode=%d\n", int(v.iss_temporal.load()), v.iss_temporal_mode.load());
+    std::fprintf(file, "iss_temporal_backend=%d\ndlss_dll_dir=%s\n", v.iss_temporal_backend.load(), v.dlss_dll_dir.c_str());
+    std::fprintf(file,"iss_power_switch_enabled=%d\niss_power_key_smoke=%d\niss_power_key_neon=%d\niss_power_key_video=%d\niss_power_key_concrete=%d\n",
+        int(v.iss_power_switch_enabled.load()),v.iss_power_keys[0].load(),v.iss_power_keys[1].load(),v.iss_power_keys[2].load(),v.iss_power_keys[3].load());
+    std::fprintf(file,"iss_power_instant=%d\n",int(v.iss_power_instant.load()));
+    std::fprintf(file,"iss_pad_speaker=%d\n",int(v.iss_pad_speaker.load()));
+    std::fprintf(file,"iss_power_glow=%.2f\n",v.iss_power_glow.load());
     std::fprintf(file, "red_orb_multiplier=%.3f\n", v.red_orb_multiplier.load());
     std::fprintf(file, "damage_dealt=%.3f\n", v.damage_dealt.load());
     std::fprintf(file, "damage_taken=%.3f\n", v.damage_taken.load());
@@ -392,7 +464,7 @@ void Save() {
                  "fsr1=%d\nrcas=%d\nrcas_strength=%d\nframes_queued=%d\n"
                  "render_resolution=%s\nengine_fps=%d\ndeferred_readback=%d\nstale_readback=%d\n"
                  "restart_unconfirmed=%d\n",
-                 TlgGraphics::DisplayModeKeys[std::clamp(v.display_mode.load(), 0, 2)].data(),
+                 TlgGraphics::DisplayModeKeys[std::clamp(v.display_mode.load(), 0, int(TlgGraphics::DisplayModeCount)-1)].data(),
                  int(v.vsync.load()), v.fps_limit.load(), int(v.async_shaders.load()),
                  int(v.fsr1.load()), int(v.rcas.load()), v.rcas_strength.load(), v.frames_queued.load(),
                  TlgGraphics::Resolutions[std::clamp(v.render_resolution.load(), 0, 5)].data(),
@@ -400,12 +472,15 @@ void Save() {
                  int(v.restart_unconfirmed.load()));
     std::fprintf(file, "sensor_aim=%d\ngraffiti_guide_seen=%d\n", v.sensor_aim.load(),
                  int(v.graffiti_guide_seen.load()));
+    std::fprintf(file, "vsync_relaxed=%d\n", int(v.vsync_relaxed.load()));
     std::fprintf(file,
                  "lod_scale=%.3f\nregion_lod=%.3f\nregion_fade=%.3f\nnear_clip=%.3f\nfar_clip=%.0f\n"
-                 "mip_lod_bias=%.3f\nlod_bands=%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+                 "mip_lod_bias=%.3f\nlod_bands=%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\ndyn_cull=%d\ndraw_budget=%d\nquality_floor=%d\nquality_target_fps=%d\n",
                  v.lod_scale.load(), v.region_lod.load(), v.region_fade.load(), v.near_clip.load(),
                  v.far_clip.load(), v.mip_lod_bias.load(), v.lod_bands[0].load(), v.lod_bands[1].load(),
-                 v.lod_bands[2].load(), v.lod_bands[3].load(), v.lod_bands[4].load(), v.lod_bands[5].load());
+                 v.lod_bands[2].load(), v.lod_bands[3].load(), v.lod_bands[4].load(), v.lod_bands[5].load(),
+                 v.dyn_cull.load(), v.draw_budget.load(), v.quality_floor.load(),
+                 v.quality_target_fps.load());
     // Fixes: applied on the next start by the launcher (TLG_BPnn / TLG_<NAME>); only the ones
     // the player or the launcher chose are written.
     for (int n = 0; n < kBackportPrefs; ++n) {
@@ -416,10 +491,11 @@ void Save() {
     }
     if (const int p = v.lazy_programs_pref; p >= 0) std::fprintf(file, "lazy_programs=%d\n", p);
     std::fprintf(file,
-                 "mouse_enabled=%d\nmouse_sensitivity=%.2f\nmouse_invert_y=%d\nmouse_smoothing=%.2f\n"
-                 "mouse_accel=%.2f\nmouse_deadzone=%.2f\nkey_map=%s\n",
+                 "mouse_enabled=%d\nmouse_sensitivity=%.2f\nmouse_invert_y=%d\n"
+                 "rumble=%d\nkey_map=%s\n",
                  int(v.mouse_enabled.load()), v.mouse_sensitivity.load(), int(v.mouse_invert_y.load()),
-                 v.mouse_smoothing.load(), v.mouse_accel.load(), v.mouse_deadzone.load(), v.key_map.c_str());
+                 int(v.rumble.load()), v.key_map.c_str());
+    std::fprintf(file, "key_binds=%s\n", KeyBinds().c_str());
     std::fprintf(file, "stick_look_sensitivity=%.3f\n", v.stick_look_sensitivity.load());
     // Read by run.sh at start.
     std::fprintf(file,
@@ -449,3 +525,10 @@ const char* UpscalerName(int upscaler) {
 }
 
 } // namespace TlgSettings
+/* Controller-speaker sounds on/off, read by the audio runtime every block (switchable mid-game). */
+extern "C" int tlggpu_pad_speaker_enabled(void){return TlgSettings::Get().iss_pad_speaker.load(std::memory_order_relaxed)?1:0;}
+extern "C" void tlggpu_power_wheel_settings(int *enabled,int keys[4],int *instant){
+    auto &s=TlgSettings::Get();*enabled=int(s.iss_power_switch_enabled.load());
+    *instant=int(s.iss_power_instant.load());
+    for(int i=0;i<4;i++)keys[i]=s.iss_power_keys[i].load();
+}

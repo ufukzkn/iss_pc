@@ -38,11 +38,73 @@ import mod_patches  # noqa: E402
 import iss_compat  # noqa: E402
 
 
+# The games this launcher starts (2026-11-11). inFAMOUS First Light (CUSA00575 1.04, the standalone)
+# runs on the same engine and the same port as Second Son: only its own game code, its "full game"
+# entitlement and its own data folder (saves, tlg.ini, shader caches) differ. The Second Son-only
+# features (mods, mouse camera, karma switcher, trophies) check the title and code and stay off.
+GAMES = {
+    'second_son': {'name': 'inFAMOUS Second Son', 'user_sub': '', 'version': '1.07'},
+    'first_light': {'name': 'inFAMOUS First Light', 'user_sub': 'first-light', 'version': '1.04',
+                    'titles': ('CUSA00575',), 'eboot': (0x6ffd70, 136_535_375),
+                    'addcont': ('UNLOCKAPPLICATIO',), 'art_min': 500,   # 652 art files in 1.04
+                    'art_required': ('cache/all_shaders.xpps', 'cache/psarc/music_a.psarc',
+                                     'cache/psarc/music_b.psarc', 'ui/vshell/save_icon.png')},
+}
+DEFAULT_GAME = 'second_son'
+_game = DEFAULT_GAME
+
+
+def current_game():
+    """'second_son' | 'first_light': the game the launcher starts (settings['game'])."""
+    return _game
+
+
+def select_game(settings):
+    """Makes settings['game'] the current game (user_dir() and the checks follow it)."""
+    global _game
+    game = settings.get('game', DEFAULT_GAME)
+    _game = game if game in GAMES else DEFAULT_GAME
+    settings['game'] = _game
+    return _game
+
+
+def guess_game_dir(game, settings):
+    """A folder of `game` next to the other game's (the PS4 dump tools put every title in one folder,
+    named after its serial); '' when none is found."""
+    titles = GAMES[game].get('titles', ('CUSA00223', 'CUSA00004'))
+    for known in (settings.get('game_dir') or '', *(settings.get('game_dirs') or {}).values()):
+        if not known:
+            continue
+        for title in titles:
+            candidate = Path(known).parent / title
+            if (candidate / 'eboot.bin').is_file():
+                return str(candidate)
+    return ''
+
+
+def switch_game(settings, game):
+    """Changes the game: its folder comes back from settings['game_dirs'] (or is guessed), the
+    other game's folder is kept there. The caller saves the settings."""
+    if game not in GAMES or game == settings.get('game', DEFAULT_GAME):
+        select_game(settings)
+        return
+    dirs = dict(settings.get('game_dirs') or {})
+    dirs[settings.get('game', DEFAULT_GAME)] = settings.get('game_dir', '')
+    settings['game_dir'] = dirs.get(game) or guess_game_dir(game, settings)
+    dirs[game] = settings['game_dir']
+    settings['game_dirs'] = dirs
+    settings['game'] = game
+    select_game(settings)
+
+
 def user_dir():
     """The folder of saves, tlg.ini, backups and GPU caches: ISS_USER_DIR, else the per-user pointer
     file (survives reinstalling), else <port folder>/user (userdata.py has the rules). Always call
-    this instead of caching it: the Qt launcher changes it while running."""
-    return userdata.user_dir(PORT_DIR)
+    this instead of caching it: the Qt launcher changes it while running. First Light keeps its own
+    in <that folder>/first-light (its saves and settings never mix with Second Son's)."""
+    base = userdata.user_dir(PORT_DIR)
+    sub = GAMES[_game]['user_sub']
+    return base / sub if sub else base
 
 
 def mods_dir():
@@ -346,6 +408,7 @@ def load_settings():
     if saved and saved.get('settings_rev', 1) < 2:
         settings['eager_readback'] = False
     settings['settings_rev'] = SETTINGS_REV
+    select_game(settings)
     return settings
 
 
@@ -370,7 +433,7 @@ _COPY_UPDATE = ('Copy every file of update 1.07 (matching CUSA00004/CUSA00223 pa
 TEXT = {
     'old_module': ('{detail} is not the one from update 1.07 (it comes from the base game 1.00 or another '
                    'version) and the game cannot start with it. ' + _COPY_UPDATE[0],
-                   'O {detail} não é o do update 1.07 (é do jogo base 1.00 ou de outra versão) e o jogo não '
+                   'O {detail} nÃ£o Ã© o do update 1.07 (Ã© do jogo base 1.00 ou de outra versÃ£o) e o jogo nÃ£o '
                    'abre com ele. ' + _COPY_UPDATE[1]),
     'other_eboot': ('eboot.bin is not the one from update 1.07 ({detail}); the port is only tested with '
                     'verified CUSA00223/CUSA00004 1.07 executables. ' + _COPY_UPDATE[0],
@@ -383,10 +446,38 @@ TEXT = {
                   'aparecem. Copie o param.sfo do 1.07 do mesmo título (no PS4: /system_data/priv/appmeta/<TITLE_ID>/param.sfo) '
                   'para o sce_sys/ da pasta do jogo; veja "Arquivos do jogo necessários" no README.'),
     'unreadable': ('{detail} could not be read (damaged, incomplete or still encrypted): dump it again from the PS4.',
-                   'Não deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faça o dump de novo no PS4.'),
+                   'NÃ£o deu para ler o {detail} (danificado, incompleto ou ainda criptografado): faÃ§a o dump de novo no PS4.'),
+    'other_title': ('{detail}: this is not the US edition (CUSA00223). The game runs, but the mouse camera, native '
+                    'rendering, trophies, the karma switcher and the other US-only features stay off.',
+                    '{detail}: esta não é a edição americana (CUSA00223). O jogo abre, mas a câmera pelo mouse, a '
+                    'renderização nativa, os troféus, o seletor de karma e os outros recursos só da edição americana '
+                    'ficam desligados.'),
+    'no_art': ('{detail} is missing: the game\'s art files (the art folder, about 27 GB) are not all there, so the '
+               'game would start to a black screen. Copy the whole base game folder, then update 1.07 over it.',
+               'Falta o {detail}: os arquivos de arte do jogo (a pasta art, cerca de 27 GB) não estão completos e o '
+               'jogo abriria com a tela preta. Copie a pasta inteira do jogo base e depois o update 1.07 por cima.'),
+    'small_art': ('the art folder has only {detail} files; the full game has about 1,800 files (27 GB). Some may be missing '
+                  'or not downloaded yet (OneDrive, an unfinished copy).',
+                  'a pasta art tem só {detail} arquivos; o jogo completo tem cerca de 1.800 arquivos (27 GB). Alguns podem '
+                  'estar faltando ou ainda não baixados (OneDrive, cópia incompleta).'),
+    'other_game_eboot': ('eboot.bin is not the one from inFAMOUS First Light 1.04 ({detail}); First Light is only '
+                         'tested with CUSA00575 1.04. Copy every file of its latest update over the game folder.',
+                         'O eboot.bin não é o do inFAMOUS First Light 1.04 ({detail}); o First Light só foi testado '
+                         'com o CUSA00575 1.04. Copie todos os arquivos do update mais recente por cima da pasta do jogo.'),
+    'other_game_title': ('{detail}: this folder is not inFAMOUS First Light (CUSA00575). Choose the First Light folder, '
+                         'or pick Second Son in the game list.',
+                         '{detail}: esta pasta não é do inFAMOUS First Light (CUSA00575). Escolha a pasta do First Light '
+                         'ou selecione o Second Son na lista de jogos.'),
 }
 # Problems that are reported but do not block Play.
-WARNINGS = {'other_eboot', 'old_param'}
+WARNINGS = {'other_eboot', 'old_param', 'other_title', 'small_art', 'other_game_eboot'}
+# The edition the port's direct mouse, native rendering, trophies and karma switcher are made for.
+TITLE_US = 'CUSA00223'
+# Art files the game opens at every start, the same in every edition and language (without them it
+# starts to a black screen), and the least number of files a complete art folder has (1,819 in US 1.07).
+ART_REQUIRED = ('cache/all_shaders.xpps', 'cache/psarc/music_a.psarc', 'cache/psarc/music_b.psarc',
+                'cache/psarc/music_c.psarc', 'ui/vshell/save_icon.png')
+ART_MIN_FILES = 1000
 
 
 def message(key, portuguese=None, **fmt):
@@ -440,14 +531,124 @@ def _cached(path, kind, inspect):
     return _inspected[key]
 
 
+def verify_list_path(title=TITLE_US):
+    """The reference list of a complete 1.07 art/ folder of this edition (tools/verify), shipped with
+    the package: CUSA00223 (US) or CUSA00004 (EU; same code, other language packs)."""
+    return PORT_DIR / 'tools' / 'verify' / f'{title}-107-art.json'
+
+
+def verify_game(game_dir, progress=None, stopped=None):
+    """Full check of the game folder's art/ files against the reference list: every file's size,
+    then its SHA-256. progress(done_bytes, total_bytes) is called while reading; stopped() returning
+    True ends the check early. Returns {'state': 'ok'|'bad'|'stopped'|'nolist'|'other_title',
+    'missing': [...], 'size': [...], 'content': [...], 'files': n, 'bytes': n, 'title': id}."""
+    import hashlib
+    game = Path(game_dir)
+    result = {'state': 'ok', 'missing': [], 'size': [], 'content': [], 'files': 0, 'bytes': 0,
+              'title': game_title(game)}
+    try:
+        reference = json.loads(verify_list_path(result['title'] or TITLE_US).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        # No list for this edition: say so (other_title) rather than "the list is missing".
+        result['state'] = 'other_title' if result['title'] and result['title'] != TITLE_US else 'nolist'
+        return result
+    if result['title'] and result['title'] != reference.get('title_id'):
+        result['state'] = 'other_title'
+        return result
+    entries = reference['files']
+    result['files'] = len(entries)
+    total = sum(size for _, size, _ in entries)
+    result['bytes'] = total
+    done = 0
+    to_hash = []
+    for rel, size, digest in entries:      # sizes first: missing or cut-short files show at once
+        path = game / rel
+        try:
+            actual = path.stat().st_size
+        except OSError:
+            result['missing'].append(rel)
+            done += size
+            continue
+        if actual != size:
+            result['size'].append(rel)
+            done += size
+            continue
+        to_hash.append((rel, size, digest))
+    for rel, size, digest in to_hash:
+        h = hashlib.sha256()
+        try:
+            with open(game / rel, 'rb') as f:
+                while True:
+                    if stopped and stopped():
+                        result['state'] = 'stopped'
+                        return result
+                    block = f.read(8 << 20)
+                    if not block:
+                        break
+                    h.update(block)
+                    done += len(block)
+                    if progress:
+                        progress(done, total)
+        except OSError:
+            result['missing'].append(rel)
+            continue
+        if h.hexdigest() != digest:
+            result['content'].append(rel)
+    if progress:
+        progress(total, total)
+    if result['missing'] or result['size'] or result['content']:
+        result['state'] = 'bad'
+    return result
+
+
+US_107_ELF_SHA256 = 'b3afd173a379f83e1e408e71fdef22b78f93092d332b79decd48a18a08bfc605'
+
+
+def eu_same_code(game_dir, title):
+    """True for EU 1.07 (CUSA00004) whose eboot is the US 1.07 executable, byte for byte: the
+    game then turns the US 1.07 features on for it too (probe.c iss_feature_title)."""
+    if title != 'CUSA00004' or mod_patches.game_app_version(game_dir) != APP_VER_107:
+        return False
+    eboot = Path(game_dir) / 'eboot.bin'
+
+    def digest(path):
+        import hashlib
+        from infamous_patches import read_eboot_elf
+        elf = read_eboot_elf(path.parent)
+        return hashlib.sha256(elf).hexdigest() if elf is not None else ''
+    try:
+        _scripts()
+        return _cached(eboot, 'sha256', digest) == US_107_ELF_SHA256
+    except (OSError, ValueError, ImportError):
+        return False
+
+
+def game_title(game_dir):
+    """TITLE_ID of the game folder's param.sfo ("CUSA00223"), or None when it cannot be read."""
+    try:
+        _scripts()
+        from prepare import sfo
+        return sfo((Path(game_dir) / 'sce_sys/param.sfo').read_bytes()).get('TITLE_ID')
+    except (OSError, ValueError, KeyError, ImportError):
+        return None
+
+
 def check_game(game_dir):
     """Problems that keep the game from starting, as (key, detail) pairs; empty means ready.
     Keys in WARNINGS are only reported."""
     game = Path(game_dir)
     problems = []
     eboot = game / 'eboot.bin'
+    info = GAMES[_game]
     if not eboot.is_file():
         problems.append(('missing', 'eboot.bin'))
+    elif 'eboot' in info:   # First Light: its own code (1.04); no Second Son update or mods to check
+        try:
+            entry, size = _cached(eboot, 'layout', eboot_layout)
+            if (entry, size) != info['eboot']:
+                problems.append(('other_game_eboot', f'entry={entry:#x}, image={size:,} bytes'))
+        except (OSError, ValueError, KeyError, StopIteration) as error:
+            problems.append(('unreadable', f'eboot.bin ({error})'))
     else:
         try:
             entry, size = _cached(eboot, 'layout', eboot_layout)
@@ -459,6 +660,23 @@ def check_game(game_dir):
                     problems.append(('old_param', f'sce_sys/param.sfo (APP_VER {version})'))
         except (OSError, ValueError, KeyError, StopIteration) as error:
             problems.append(('unreadable', f'eboot.bin ({error})'))
+    title = game_title(game)
+    if 'titles' in info:
+        if title and title not in info['titles']:
+            problems.append(('other_game_title', title))
+    elif title and title != TITLE_US and not eu_same_code(game, title):
+        problems.append(('other_title', title))
+    art = game / 'art'
+    missing_art = next((rel for rel in info.get('art_required', ART_REQUIRED) if not (art / rel).is_file()), None)
+    if missing_art:
+        problems.append(('no_art', f'art/{missing_art}'))
+    else:
+        try:
+            count = _cached(art, 'art_files', lambda path: sum(len(names) for _, _, names in os.walk(path)))
+        except OSError:
+            count = None
+        if count is not None and count < info.get('art_min', ART_MIN_FILES):
+            problems.append(('small_art', f'{count:,}'))
     for module in MODULES:
         path = game / 'sce_module' / module
         if not path.is_file():
@@ -763,7 +981,16 @@ def save_experimental(settings, states):
     """Writes the choices of the "Experimental fixes" window: tlg.ini keys (the game's own file)
     and the switches kept in settings.json. Shared by the Tk and Qt launchers."""
     user_dir().mkdir(parents=True, exist_ok=True)
-    backports_table.write_ini(user_dir() / 'tlg.ini', backports_table.ini_updates(states))
+    ini_path = user_dir() / 'tlg.ini'
+    updates = backports_table.ini_updates(states)
+    # A temporal mode renders below the output, so it needs a native output preset (the game ignores it
+    # otherwise): choosing a mode with the output off starts at 1080p, the player can change it under Output.
+    by_id = {i.id: i for i in backports_table.ITEMS}
+    mode = backports_table.effective(by_id['menu:iss_temporal_mode'], states)
+    if (backports_table.effective(by_id['menu:iss_temporal'], states) == '1' and mode != '0'
+            and read_ini(ini_path).get('iss_native_output', '0').strip() == '0'):
+        updates['iss_native_output'] = '1'
+    backports_table.write_ini(ini_path, updates)
     for item in backports_table.ITEMS:
         if item.store == 'launcher':  # already handled by build_env (settings.json)
             value = backports_table.effective(item, states)
@@ -791,10 +1018,14 @@ def build_env(settings, extra=None):
         env['ISS_UI_LANG'] = settings['ui_language']
     env['ISS_CONFIG'] = str(user_dir() / 'tlg.ini')
     dlc = addons.labels(user_dir() / 'dlc')
+    # First Light asks for its "full game" entitlement at every start (an error screen without it);
+    # the port answers it offline, as for the player's own add-ons.
+    dlc = [*dlc, *(label for label in GAMES[_game].get('addcont', ()) if label not in dlc)]
     if dlc:
         env.setdefault('ISS_ADDCONT_LABELS', ','.join(dlc))
+        env.setdefault('TLG_ADDCONT_LABELS', env['ISS_ADDCONT_LABELS'])
     # Window name, app id (matches infamous-pc.desktop for Alt+Tab and the dock) and icon.
-    env.setdefault('ISS_APP_NAME', 'inFAMOUS Second Son')
+    env.setdefault('ISS_APP_NAME', GAMES[_game]['name'])
     env.setdefault('ISS_APP_ID', 'infamous-pc')
     icon = window_icon(settings)
     if icon:
@@ -971,6 +1202,11 @@ def launch(settings, seconds=0, extra_env=None):
     cmd = [str(probe), str(OUT_DIR / 'boot-linked.bin'), '--app0', settings['game_dir'],
            '--user', str(data), '--content-profile', str(OUT_DIR / 'content.bin'),
            '--patches', str(OUT_DIR / 'patches.bin'), '--timeout', str(int(seconds))]
+    extra_env = dict(extra_env or {})
+    concrete_bank = extra_env.pop(iss_controller_feedback.BANK_MOUNT_KEY, None)
+    if concrete_bank:
+        for root in ('/app0', '/hostapp'):
+            cmd += ['--mount', f'{root}/art/cache/common_sound.sprig.xpps={concrete_bank}']
     if ISA_TABLE.is_file():
         cmd += ['--isa-rewrite', str(ISA_TABLE)]
     raise_open_file_limit()
@@ -992,7 +1228,7 @@ def main(argv=None):
         freed, failures = clear_shader_cache(settings)
         print(f'Cache de shaders: {shader_cache.human_size(freed)} liberados', flush=True)
         for path, error in failures:
-            print(f'Não apagado (em uso? feche o jogo): {path}: {error}', file=sys.stderr)
+            print(f'NÃ£o apagado (em uso? feche o jogo): {path}: {error}', file=sys.stderr)
         return 1 if failures else 0
     problems = check_game(settings['game_dir'])
     for kind, detail in problems:
@@ -1031,6 +1267,11 @@ def main(argv=None):
     sys.stdout.flush()
     return process.wait()
 
+
+# DualSense controller output (2026-11-06): lightbar, controller-speaker routing/gain and the added
+# Concrete cue. Wraps launch() for Renderer v2 on Windows; see iss_controller_feedback.py.
+import iss_controller_feedback
+iss_controller_feedback.install(globals())
 
 if __name__ == '__main__':
     sys.exit(main())

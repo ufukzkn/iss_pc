@@ -20,6 +20,8 @@ inline bool Mark(unsigned) { return false; }
 #include <cstring>
 #include <ctime>
 #include <mutex>
+#include <string>
+#include <tuple>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -38,6 +40,15 @@ extern "C" void runtime_restart(void); // src/probe.c: starts run.py again, ends
 #include "shader_recompiler/recompiler_toggles.h"
 #endif
 #include "imgui.h"
+#include "tlg_overlay_scale.h"
+#ifdef TLG_RENDERER_V2
+#include "../../src/iss_native_resolution.h"
+#include "../../src/iss_native_live.h"
+#include "../../src/iss_power_wheel.h"
+#include "tlg_power_art.h"
+#include "tlg_trophies.h"
+extern void TlgKarmaMenu();
+#endif
 #include "imgui_internal.h" // RegisterUserTexture (save pictures)
 #include "imgui_impl_vulkan.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -140,6 +151,7 @@ std::vector<TlgPng::Image> choice_pictures;
 std::vector<ImTextureData*> choice_textures, choice_retired;
 std::atomic<bool> choice_retiring{false};
 float base_scale = 1.0f;
+ImGuiStyle base_overlay_style;
 
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
@@ -149,7 +161,7 @@ void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
         return;
     }
-    ImGui::GetIO().MouseDrawCursor = value;
+    overlay_context->IO.MouseDrawCursor = value;
     if (value) {
         requested_tab = TlgSettings::Get().menu_tab;
     }
@@ -378,11 +390,32 @@ std::string OverlayText() {
     sample.fps = frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f;
     sample.frame_ms = frame_ms_avg;
     sample.upscaler = UpscalerLabel(s.upscaler);
+#ifdef TLG_RENDERER_V2
+    // inFAMOUS: the upscaler is one of its own settings (the legacy field above is the other port's).
+    if (s.iss_temporal) {
+        sample.upscaler = s.iss_temporal_backend == 1 ? "DLSS" : "FSR 3.1";
+    } else if (s.fsr1) {
+        sample.upscaler = "FSR 1";
+    }
+#endif
     return P::Format(sample, items, s.overlay_layout == 0);
 }
 
 constexpr const char* Unsupported = "Unavailable: game version or code signature mismatch.";
 
+
+// Display mode row, shared with the Native rendering tab.
+void DisplayModeRow() {
+    namespace G = TlgGraphics;
+    auto& s = TlgSettings::Get();
+#ifdef TLG_RENDERER_V2
+    static const char* const modes[] = {"Windowed", "Borderless window", "Fullscreen (borderless)"};
+#else
+    static const char* const modes[] = {TL("Windowed", "Janela"), TL("Borderless window", "Janela sem borda"), TL("Fullscreen", "Tela cheia")};
+#endif
+    ChoiceRow(TL("Display mode", "Modo de exibição"), s.display_mode, G::DisplayModeCount == 3 ? modes : G::DisplayModeNames.data(),
+              nullptr, G::DisplayModeCount, TL("Windowed, borderless or experimental exclusive fullscreen.", "Janela, tela cheia sem borda ou exclusiva experimental."));
+}
 
 void ImageTab() {
     namespace G = TlgGraphics;
@@ -393,6 +426,11 @@ void ImageTab() {
         ChoiceRow(TL("Display mode", "Modo de exibição"), s.display_mode, G::DisplayModeCount == 3 ? modes : G::DisplayModeNames.data(),
                   nullptr, G::DisplayModeCount, TL("Windowed, borderless window or exclusive fullscreen.", "Janela, janela sem borda ou tela cheia exclusiva."));
         CheckRow("VSync", s.vsync, TL("Waits for the monitor: no tearing, a little more input delay.", "Espera o monitor: sem tearing, um pouco mais de atraso de entrada."));
+#ifdef TLG_RENDERER_V2
+        CheckRow(TL("Adaptive VSync (weaker PCs)", "VSync adaptativo (PCs mais fracos)"), s.vsync_relaxed,
+                 TL("For PCs running near 30 or 60 FPS: a late frame is shown at once (may tear a little) instead of waiting a whole extra refresh, so the frame rate stops dropping in steps (30 -> 20 -> 15). Applies right away. Has no effect if your display does not offer it.",
+                    "Para PCs perto de 30 ou 60 FPS: um quadro atrasado aparece na hora (pode ter um pouco de tearing) em vez de esperar mais uma atualização inteira, e o FPS para de cair em degraus (30 -> 20 -> 15). Vale na hora. Sem efeito se a tela não oferecer."));
+#endif
         ImGui::EndTable();
     }
     const int iw = s.image_width, ih = s.image_height, ww = s.window_width, wh = s.window_height;
@@ -403,8 +441,31 @@ void ImageTab() {
     // built for GoW3's pipeline and make TLG's image shake, so they are not offered here.
     ImGui::SeparatorText(TL("Scaling and sharpening", "Escala e nitidez"));
     if (BeginRows("##scaling")) {
+#ifdef TLG_RENDERER_V2
+        // One selector for every upscaler: the spatial FSR 1 on the final image, or one temporal upscaler
+        // (FSR 3.1 / DLSS) that replaces the game's anti-aliasing. Off keeps the game as it is.
+        static const char* const upscaler_names[] = {TL("Off", "Desligado"), TL("FSR 1 (spatial)", "FSR 1 (espacial)"),
+                                                     "FSR 3.1 (temporal)", "NVIDIA DLSS (temporal)"};
+        static std::atomic<int> upscaler_choice{0};
+        const int current = s.iss_temporal ? (s.iss_temporal_backend == 1 ? 3 : 2) : (s.fsr1 ? 1 : 0);
+        upscaler_choice = current;
+        ChoiceRow(TL("Upscaler (temporal ones: next start)", "Upscaler (os temporais: próxima partida)"), upscaler_choice, upscaler_names, nullptr, 4,
+                  TL("FSR 1 enlarges the image on the final frame (no shimmer). FSR 3.1 and DLSS replace the game's anti-aliasing and rebuild the image from several frames; "
+                     "DLSS needs a GeForce RTX card, nvngx_dlss.dll and the tlg_dlss.dll bridge (the launcher's Graphics screen shows what is missing), without them FSR 3.1 is used.",
+                     "O FSR 1 amplia a imagem do quadro final (sem tremor). FSR 3.1 e DLSS trocam o anti-aliasing do jogo e reconstroem a imagem a partir de vários quadros; "
+                     "o DLSS precisa de uma GeForce RTX, do nvngx_dlss.dll e da ponte tlg_dlss.dll (a tela Gráficos do launcher mostra o que falta), sem eles usa-se o FSR 3.1."));
+        if (upscaler_choice != current) {
+            const int pick = upscaler_choice;
+            s.fsr1 = pick == 1;
+            s.iss_temporal = pick >= 2;
+            if (pick >= 2) s.iss_temporal_backend = pick == 3 ? 1 : 0;
+            if (pick >= 2 && s.iss_native_output == 0) s.iss_native_output = 1; // the mode row needs an output resolution
+            dirty = true;
+        }
+#else
         CheckRow(TL("Upscale with FSR 1", "Ampliar com FSR 1"), s.fsr1,
                  TL("Enlarges the game image when it is smaller than the window (spatial filter, no shimmer).", "Amplia a imagem do jogo quando ela é menor que a janela (filtro espacial, sem tremor)."));
+#endif
         ImGui::BeginDisabled(rcas_blocked);
         CheckRow(TL("Sharpening (RCAS)", "Nitidez (RCAS)"), s.rcas,
                  rcas_blocked && downscaling ? TL("No effect: the game's image is larger than the window.", "Sem efeito: a imagem do jogo é maior que a janela.")
@@ -414,6 +475,17 @@ void ImageTab() {
         ImGui::BeginDisabled(!s.rcas || rcas_blocked);
         SliderRow(TL("Sharpening strength", "Intensidade da nitidez"), s.rcas_strength, 0, 100, "%d%%", TL("How strong the sharpening is.", "Quão forte é a nitidez."));
         ImGui::EndDisabled();
+#ifdef TLG_RENDERER_V2
+        static const char* const temporal_labels[] = {TL("Native (anti-aliasing, resolution below)", "Nativo (anti-aliasing, resolução abaixo)"),
+                                                      TL("Quality (1.5x)", "Qualidade (1,5x)"), TL("Balanced (1.7x)", "Equilibrado (1,7x)"),
+                                                      TL("Performance (2x)", "Desempenho (2x)"), TL("Ultra performance (3x)", "Desempenho máximo (3x)")};
+        ImGui::BeginDisabled(!s.iss_temporal || s.iss_native_output == 0);
+        ChoiceRow(TL("Temporal upscaler: mode (next start)", "Upscaler temporal: modo (próxima partida)"), s.iss_temporal_mode, temporal_labels, nullptr, 5,
+                  s.iss_native_output == 0 ? TL("Needs an output resolution in the Native rendering tab.", "Precisa de uma resolução de saída na aba Renderização nativa.")
+                                           : TL("The game draws at the output size divided by this ratio and FSR 3.1 rebuilds the output image. Native keeps the internal resolution chosen in the Native rendering tab.",
+                                                "O jogo desenha no tamanho da saída dividido por essa razão e o FSR 3.1 reconstrói a imagem de saída. Nativo mantém a resolução interna escolhida na aba Renderização nativa."));
+        ImGui::EndDisabled();
+#endif
         ImGui::EndTable();
     }
     ImGui::SeparatorText(TL("Draw distance and detail", "Distância de visão e detalhe"));
@@ -442,6 +514,36 @@ void ImageTab() {
                     "Plano distante padrão das câmeras (o jogo usa 10000000, sem limite). Menor corta a visão; "
                     "vale na próxima câmera."),
                  ImGuiSliderFlags_Logarithmic);
+        static const char* const cull_labels[] = {TL("The game's own", "Do jogo"), TL("Never drop objects", "Nunca descartar objetos"),
+                                                  TL("Performance (drop from level 11)", "Desempenho (descarta a partir do nível 11)")};
+        ChoiceRow(TL("Dynamic quality: dropped objects", "Qualidade dinâmica: objetos descartados"), s.dyn_cull, cull_labels, nullptr, 3,
+                  s.view_supported ? TL("In heavy scenes the game raises a quality level on its own and, at levels 15 to 20, skips a share of "
+                                        "objects and particles at random. Performance starts skipping earlier: smoother, less detail.",
+                                        "Em cenas pesadas o jogo sobe um nível de qualidade sozinho e, nos níveis 15 a 20, pula uma parte dos "
+                                        "objetos e partículas ao acaso. Desempenho começa a pular antes: mais fluido, menos detalhe.")
+                                   : TL(Unsupported, "Indisponível: versão do jogo ou assinatura do código diferente."));
+        static const char* const target_labels[] = {TL("Off", "Desligado"), "30 FPS", "45 FPS", "60 FPS"};
+        static const int target_values[] = {0, 30, 45, 60};
+        ChoiceRow(TL("Automatic quality: target frame rate", "Qualidade automática: taxa de quadros alvo"), s.quality_target_fps,
+                  target_labels, target_values, 4,
+                  s.view_supported ? TL("Raises the minimum quality level while the frame rate stays under the target and gives it back when "
+                                        "there is room to spare (menus and loading are ignored). The minimum below still applies.",
+                                        "Sobe o nível mínimo de qualidade enquanto a taxa de quadros fica abaixo do alvo e devolve quando "
+                                        "há folga (menus e carregamentos são ignorados). O mínimo abaixo continua valendo.")
+                                   : TL(Unsupported, "Indisponível: versão do jogo ou assinatura do código diferente."));
+        SliderRow(TL("Minimum dynamic quality level", "Nível mínimo da qualidade dinâmica"), s.quality_floor, 0, 14, "%d",
+                  s.view_supported ? TL("The game steps its quality level (0 best, 14 lowest: shorter LOD, fewer shadow cascades, fewer "
+                                        "objects) up in heavy scenes and back down in light ones. Raising the minimum keeps the "
+                                        "lighter levels: more FPS on weak hardware, less detail.",
+                                        "O jogo sobe o nível de qualidade (0 melhor, 14 mais baixo: LOD mais curto, menos cascatas de sombra, "
+                                        "menos objetos) em cenas pesadas e desce nas leves. Subir o mínimo mantém os níveis mais leves: "
+                                        "mais FPS em máquina fraca, menos detalhe.")
+                                   : TL(Unsupported, "Indisponível: versão do jogo ou assinatura do código diferente."));
+        SliderRow(TL("Draw list budget (next start)", "Orçamento das listas de draw (próximo início)"), s.draw_budget, 10, 100, "%d%%",
+                  TL("Share of the game's 24 MB / 10 MB frame command lists. Lower makes the game cut LOD, shadows and detail sooner "
+                     "in heavy scenes. Read at start: set it in the launcher or in tlg.ini and restart.",
+                     "Parte das listas de comandos de 24 MB / 10 MB do quadro. Menor faz o jogo reduzir LOD, sombras e detalhe mais cedo "
+                     "em cenas pesadas. Lido na partida: ajuste no launcher ou no tlg.ini e reinicie."));
         ImGui::EndDisabled();
         FloatRow(TL("Texture LOD bias (MipLodBias)", "Bias de LOD das texturas (MipLodBias)"), s.mip_lod_bias, -3.0f, 3.0f,
                  "%+.2f",
@@ -455,6 +557,10 @@ void ImageTab() {
             s.near_clip = 10.0f;
             s.far_clip = 1.0e7f;
             s.mip_lod_bias = 0.0f;
+            s.dyn_cull = 0;
+            s.draw_budget = 100;
+            s.quality_floor = 1;
+            s.quality_target_fps = 0;
             const float bands[6] = {400.0f, 750.0f, 1500.0f, 3500.0f, 6000.0f, 15000.0f};
             for (int b = 0; b < 6; ++b) s.lod_bands[b] = bands[b];
             dirty = true;
@@ -497,9 +603,10 @@ void PerformanceTab() {
     ImGui::SeparatorText(TL("Live", "Em tempo real"));
     if (BeginRows("##live")) {
         static const char* const fps_labels[] = {"30", "60", "120", "240", TL("Unlimited", "Sem limite")};
-        static_assert(std::size(fps_labels) == G::FpsLimits.size());
+        static_assert(sizeof(fps_labels) / sizeof(fps_labels[0]) == G::FpsLimits.size(),
+                      "Every FPS limit must have a matching dropdown label");
         ChoiceRow(TL("Frame rate limit", "Limite de FPS"), s.fps_limit, fps_labels, G::FpsLimits.data(), int(G::FpsLimits.size()),
-                  TL("Caps the presented frames. The game runs at 30 FPS (as on PS4).", "Limita os quadros apresentados. O jogo roda a 30 FPS (como no PS4)."));
+                  TL("Caps the frame rate with evenly spaced frames. 60 gives the steadiest pacing in big fights.", "Limita o FPS com quadros espaçados por igual. 60 dá o ritmo mais estável em lutas grandes."));
         static const char* const queued_labels[] = {TL("1 (lowest latency)", "1 (menor atraso)"), "2", TL("Unlimited", "Sem limite")};
         ChoiceRow(TL("Frames queued", "Quadros na fila"), s.frames_queued, queued_labels, G::FramesQueued.data(),
                   int(G::FramesQueued.size()), TL("More frames queued: steadier FPS, slower response to input.", "Mais quadros na fila: FPS mais estável, resposta mais lenta."));
@@ -610,6 +717,413 @@ void FixesSection() {
 
 void OpenGuide(); // the graffiti guide (below, with the save dialogs)
 
+// ---- Keyboard & mouse bindings window (2026-11-06; like shadPS4's mapping dialog) -------------------
+// Every PS4 control, the stick directions included, bound to a key or mouse button. Click a control,
+// then press the key / click the mouse button / scroll the wheel (HandleEvent takes it before the menu).
+// Saved in tlg.ini key_binds (only what differs from the defaults) and applied at once
+// (src/runtime_pad.c runtime_pad_set_key_binds). imgui_mutex guards this state.
+extern "C" int runtime_pad_set_key_binds(const char* spec);
+extern "C" int runtime_pad_key_binding(const char* control, int which, char* out, size_t size);
+struct BindControl { const char* id; const char* en; const char* pt; const char* tag; };
+static const BindControl kBindControls[] = {
+    {"ls_up", "Move forward", "Andar para frente", "Move F"}, {"ls_down", "Move back", "Andar para trás", "Move B"},
+    {"ls_left", "Move left", "Andar para a esquerda", "Move L"}, {"ls_right", "Move right", "Andar para a direita", "Move R"},
+    {"up", "D-pad up", "Direcional cima", "D-Up"}, {"down", "D-pad down", "Direcional baixo", "D-Down"},
+    {"left", "D-pad left", "Direcional esquerda", "D-Left"}, {"right", "D-pad right", "Direcional direita", "D-Right"},
+    {"l1", "L1", "L1", "L1"}, {"l2", "L2 (aim)", "L2 (mirar)", "L2"}, {"l3", "L3", "L3", "L3"},
+    {"options", "Options", "Options", "Options"},
+    {"touchpad_left", "Touchpad left (photo mode)", "Touchpad esquerdo (modo foto)", "Photo"},
+    {"touchpad_right", "Touchpad right (pause menu)", "Touchpad direito (menu de pausa)", "Pause"},
+    {"triangle", "Triangle", "Triângulo", "Tri"}, {"circle", "Circle", "Círculo", "Circle"},
+    {"cross", "Cross", "X", "Cross"}, {"square", "Square", "Quadrado", "Square"},
+    {"r1", "R1", "R1", "R1"}, {"r2", "R2 (use power)", "R2 (usar poder)", "R2"}, {"r3", "R3", "R3", "R3"},
+    {"rs_up", "Camera up", "Câmera para cima", "Cam U"}, {"rs_down", "Camera down", "Câmera para baixo", "Cam D"},
+    {"rs_left", "Camera left", "Câmera para a esquerda", "Cam L"}, {"rs_right", "Camera right", "Câmera para a direita", "Cam R"},
+};
+constexpr int kBindCount = int(sizeof(kBindControls) / sizeof(*kBindControls));
+// The power wheel's keyboard shortcuts (tlg.ini iss_power_key_*; keyboard keys only, src/runtime_pad.c
+// power_switch_input reads them from the keyboard state). Captured as binds_capture kBindCount + i.
+struct PowerKey { const char* en; const char* pt; const char* tag; };
+static const PowerKey kPowerKeys[4] = {{"Smoke", "Fumaça", "Smoke"}, {"Neon", "Neon", "Neon"},
+                                       {"Video", "Vídeo", "Video"}, {"Concrete", "Concreto", "Concr"}};
+static bool binds_open = false;
+static int binds_capture = -1;          // control waiting for a key, -1 none; >= kBindCount: a power key
+static const char* binds_problem = "";
+// Keys nothing in this window can take: F1 (the menu), Esc (release the mouse / cancel), F10 (overlay),
+// and T / G / Y (the graffiti sensor, read straight from the keyboard).
+static bool ReservedKey(SDL_Scancode code) {
+    return code == SDL_SCANCODE_F1 || code == SDL_SCANCODE_ESCAPE || code == SDL_SCANCODE_F10 ||
+           code == SDL_SCANCODE_F9 || code == SDL_SCANCODE_F11 || // the port's own shortcuts
+           code == SDL_SCANCODE_T || code == SDL_SCANCODE_G || code == SDL_SCANCODE_Y;
+}
+static bool ReservedName(const std::string& name) {
+    const SDL_Scancode code = SDL_GetScancodeFromName(name.c_str());
+    return code != SDL_SCANCODE_UNKNOWN && ReservedKey(code);
+}
+
+static std::string BindingOf(int control, int which) {
+    char text[256];
+    return runtime_pad_key_binding(kBindControls[control].id, which, text, sizeof(text)) >= 0 ? std::string(text) : std::string();
+}
+// Saves and applies: `control` becomes `name` ("" = no key), the others keep theirs; only the controls
+// that differ from their default are written.
+static void SetBinding(int control, const std::string& name) {
+    std::string spec;
+    for (int i = 0; i < kBindCount; ++i) {
+        const std::string want = i == control ? name : BindingOf(i, 0);
+        if (want == BindingOf(i, 1)) continue;
+        if (!spec.empty()) spec += ',';
+        spec += std::string(kBindControls[i].id) + "=" + (want.empty() ? "none" : want);
+    }
+    TlgSettings::SetKeyBinds(spec);
+    TlgSettings::Save();
+    runtime_pad_set_key_binds(spec.c_str());
+}
+static void ResetBindings() {
+    TlgSettings::SetKeyBinds("");
+    TlgSettings::Save();
+    runtime_pad_set_key_binds("");
+}
+// HandleEvent, imgui_mutex held: the key or mouse button for the control being bound.
+static bool BindingCaptureEvent(const SDL_Event& event) {
+    if (binds_capture < 0) return false;
+    std::string name;
+    switch (event.type) {
+    case SDL_EVENT_KEY_DOWN: {
+        if (event.key.repeat) return true;
+        const SDL_Scancode code = event.key.scancode;
+        if (code == SDL_SCANCODE_ESCAPE) { binds_capture = -1; binds_problem = ""; return true; }
+        if (ReservedKey(code)) {
+            binds_problem = TL("F1 (menu), Esc, F9-F11 and T / G / Y (graffiti) are reserved; choose another key.",
+                               "F1 (menu), Esc, F9-F11 e T / G / Y (grafite) são reservadas; escolha outra tecla.");
+            return true;
+        }
+        if (binds_capture >= kBindCount) { // a power wheel shortcut: a keyboard key, not used by another one
+            auto& s = TlgSettings::Get();
+            const int index = binds_capture - kBindCount;
+            for (int j = 0; j < 4; ++j) {
+                if (j != index && s.iss_power_keys[j] == int(code)) {
+                    binds_problem = TL("Another power already uses that key.", "Outro poder já usa essa tecla.");
+                    return true;
+                }
+            }
+            s.iss_power_keys[index] = int(code);
+            TlgSettings::Save();
+            binds_capture = -1;
+            binds_problem = "";
+            return true;
+        }
+        const char* n = SDL_GetScancodeName(code);
+        name = n ? n : "";
+        break;
+    }
+    case SDL_EVENT_KEY_UP: case SDL_EVENT_MOUSE_BUTTON_UP: case SDL_EVENT_TEXT_INPUT: return true;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        static const char* const names[] = {"", "Mouse Left", "Mouse Middle", "Mouse Right", "Mouse X1", "Mouse X2"};
+        if (event.button.button >= 1 && event.button.button <= 5) name = names[event.button.button];
+        break;
+    }
+    case SDL_EVENT_MOUSE_WHEEL:
+        name = event.wheel.y > 0 ? "Wheel Up" : event.wheel.y < 0 ? "Wheel Down"
+             : event.wheel.x > 0 ? "Wheel Right" : event.wheel.x < 0 ? "Wheel Left" : "";
+        break;
+    default: return false;
+    }
+    if (binds_capture >= kBindCount) { // mouse or wheel for a power key
+        binds_problem = TL("The power wheel shortcuts take keyboard keys only.", "Os atalhos da roda de poderes aceitam só teclas.");
+        return true;
+    }
+    if (name.empty() || name.find_first_of(",=|") != std::string::npos) {
+        binds_problem = TL("That key cannot be used for a binding; choose another.",
+                           "Essa tecla não pode ser usada; escolha outra.");
+        return true;
+    }
+    SetBinding(binds_capture, name);
+    binds_capture = -1;
+    binds_problem = "";
+    return true;
+}
+
+// The keyboard and mouse drawn with every key in use labelled.
+static void DrawBindingsKeyboard(const std::string (&current)[kBindCount]) {
+    // key name (lower case) -> the tags of the controls it is bound to
+    std::vector<std::pair<std::string, std::string>> uses;
+    auto lower = [](std::string t) { for (auto& c : t) c = char(std::tolower(static_cast<unsigned char>(c))); return t; };
+    {   // the power wheel shortcuts are keys in use too
+        auto& s = TlgSettings::Get();
+        for (int p = 0; p < 4; ++p) {
+            const char* n = SDL_GetScancodeName(SDL_Scancode(s.iss_power_keys[p].load()));
+            if (n && *n) uses.emplace_back(lower(n), kPowerKeys[p].tag);
+        }
+    }
+    for (int i = 0; i < kBindCount; ++i) {
+        size_t start = 0;
+        const std::string& b = current[i];
+        while (start <= b.size() && !b.empty()) {
+            const size_t bar = b.find('|', start);
+            const std::string one = lower(b.substr(start, bar == std::string::npos ? std::string::npos : bar - start));
+            bool merged = false;
+            for (auto& u : uses) if (u.first == one) { u.second += std::string("/") + kBindControls[i].tag; merged = true; }
+            if (!merged) uses.emplace_back(one, kBindControls[i].tag);
+            if (bar == std::string::npos) break;
+            start = bar + 1;
+        }
+    }
+    auto use_of = [&](const char* key_name) -> const std::string* {
+        const std::string k = lower(key_name);
+        for (auto& u : uses) if (u.first == k) return &u.second;
+        return nullptr;
+    };
+    struct Key { const char* label; const char* name; float x, y, w; };
+    std::vector<Key> keys;
+    auto row = [&](float y, float x, std::initializer_list<std::tuple<const char*, const char*, float>> items) {
+        for (const auto& [label, name, w] : items) { keys.push_back({label, name, x, y, w}); x += w; }
+    };
+    row(0, 0, {{"Esc", "Escape", 1}}); row(0, 2, {{"F1", "F1", 1}, {"F2", "F2", 1}, {"F3", "F3", 1}, {"F4", "F4", 1}});
+    row(0, 6.5f, {{"F5", "F5", 1}, {"F6", "F6", 1}, {"F7", "F7", 1}, {"F8", "F8", 1}});
+    row(0, 11, {{"F9", "F9", 1}, {"F10", "F10", 1}, {"F11", "F11", 1}, {"F12", "F12", 1}});
+    row(1.25f, 0, {{"`", "`", 1}, {"1", "1", 1}, {"2", "2", 1}, {"3", "3", 1}, {"4", "4", 1}, {"5", "5", 1}, {"6", "6", 1},
+                   {"7", "7", 1}, {"8", "8", 1}, {"9", "9", 1}, {"0", "0", 1}, {"-", "-", 1}, {"=", "=", 1}, {"Backspace", "Backspace", 2}});
+    row(2.25f, 0, {{"Tab", "Tab", 1.5f}, {"Q", "Q", 1}, {"W", "W", 1}, {"E", "E", 1}, {"R", "R", 1}, {"T", "T", 1}, {"Y", "Y", 1},
+                   {"U", "U", 1}, {"I", "I", 1}, {"O", "O", 1}, {"P", "P", 1}, {"[", "[", 1}, {"]", "]", 1}, {"\\", "\\", 1.5f}});
+    row(3.25f, 0, {{"Caps", "CapsLock", 1.75f}, {"A", "A", 1}, {"S", "S", 1}, {"D", "D", 1}, {"F", "F", 1}, {"G", "G", 1}, {"H", "H", 1},
+                   {"J", "J", 1}, {"K", "K", 1}, {"L", "L", 1}, {";", ";", 1}, {"'", "'", 1}, {"Enter", "Return", 2.25f}});
+    row(4.25f, 0, {{"Shift", "Left Shift", 2.25f}, {"Z", "Z", 1}, {"X", "X", 1}, {"C", "C", 1}, {"V", "V", 1}, {"B", "B", 1}, {"N", "N", 1},
+                   {"M", "M", 1}, {",", ",", 1}, {".", ".", 1}, {"/", "/", 1}, {"Shift", "Right Shift", 2.75f}});
+    row(5.25f, 0, {{"Ctrl", "Left Ctrl", 1.25f}, {"Win", "Left GUI", 1.25f}, {"Alt", "Left Alt", 1.25f}, {"Space", "Space", 6.25f},
+                   {"Alt", "Right Alt", 1.25f}, {"Win", "Right GUI", 1.25f}, {"Menu", "Menu", 1.25f}, {"Ctrl", "Right Ctrl", 1.25f}});
+    row(1.25f, 15.25f, {{"Ins", "Insert", 1}, {"Home", "Home", 1}, {"PgUp", "PageUp", 1}});
+    row(2.25f, 15.25f, {{"Del", "Delete", 1}, {"End", "End", 1}, {"PgDn", "PageDown", 1}});
+    row(4.25f, 16.25f, {{"Up", "Up", 1}});
+    row(5.25f, 15.25f, {{"Left", "Left", 1}, {"Down", "Down", 1}, {"Right", "Right", 1}});
+    // Sized to the window: the keyboard (22.5 units with the mouse beside it) fills the width.
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float u = std::floor(std::clamp(avail / 25.5f, ImGui::GetFontSize() * 2.4f, ImGui::GetFontSize() * 3.6f));
+    const float gap = std::max(3.0f, u * 0.10f);
+    const ImVec2 o(ImGui::GetCursorScreenPos().x + std::max(0.0f, (avail - 25.0f * u) * 0.5f), ImGui::GetCursorScreenPos().y + u * 0.15f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float small = ImGui::GetFontSize() * 0.74f;
+    const ImU32 idle = IM_COL32(22, 24, 28, 255), idle_edge = IM_COL32(58, 62, 70, 255),
+                bound = IM_COL32(28, 110, 66, 255), bound_edge = IM_COL32(53, 208, 127, 255),
+                clash = IM_COL32(120, 82, 20, 255), clash_edge = IM_COL32(235, 170, 60, 255),
+                label = IM_COL32(150, 156, 168, 255), label_on = IM_COL32(235, 255, 242, 255);
+    auto box = [&](float x, float y, float w, float h, const char* name, const std::string* use, float rounding) {
+        const ImVec2 a(o.x + x * u, o.y + y * u), b(o.x + (x + w) * u - gap, o.y + (y + h) * u - gap);
+        const bool twice = use && use->find('/') != std::string::npos;
+        dl->AddRectFilled(a, b, use ? (twice ? clash : bound) : idle, rounding);
+        dl->AddRect(a, b, use ? (twice ? clash_edge : bound_edge) : idle_edge, rounding, 0, use ? 1.5f : 1.0f);
+        const float pad = std::max(4.0f, u * 0.10f);
+        dl->PushClipRect(a, b, true);
+        dl->AddText(font, small, ImVec2(a.x + pad, a.y + pad * 0.6f), use ? label_on : label, name);
+        if (use) dl->AddText(font, small, ImVec2(a.x + pad, b.y - small - pad * 0.6f), IM_COL32(255, 255, 255, 255), use->c_str());
+        dl->PopClipRect();
+    };
+    for (const auto& k : keys) box(k.x, k.y, k.w, 1, k.label, use_of(k.name), u * 0.12f);
+    // Mouse beside the keyboard: left / wheel / right on top, the wheel's sides and the thumb buttons.
+    const float mx = 20.5f, my = 1.25f;
+    dl->AddRectFilled(ImVec2(o.x + mx * u, o.y + my * u), ImVec2(o.x + (mx + 3.0f) * u - gap, o.y + (my + 5.0f) * u - gap),
+                      IM_COL32(16, 17, 20, 255), u * 1.1f);
+    dl->AddRect(ImVec2(o.x + mx * u, o.y + my * u), ImVec2(o.x + (mx + 3.0f) * u - gap, o.y + (my + 5.0f) * u - gap),
+                idle_edge, u * 1.1f);
+    box(mx, my, 1.25f, 2.0f, "L", use_of("Mouse Left"), u * 0.35f);
+    box(mx + 1.75f, my, 1.25f, 2.0f, "R", use_of("Mouse Right"), u * 0.35f);
+    box(mx + 1.25f, my, 0.5f + gap / u, 0.65f, "", use_of("Wheel Up"), u * 0.12f);
+    box(mx + 1.25f, my + 0.67f, 0.5f + gap / u, 0.66f, "M", use_of("Mouse Middle"), u * 0.12f);
+    box(mx + 1.25f, my + 1.35f, 0.5f + gap / u, 0.65f, "", use_of("Wheel Down"), u * 0.12f);
+    box(mx - 1.35f, my + 2.4f, 1.2f, 0.85f, "X2", use_of("Mouse X2"), u * 0.12f);
+    box(mx - 1.35f, my + 3.35f, 1.2f, 0.85f, "X1", use_of("Mouse X1"), u * 0.12f);
+    box(mx + 0.4f, my + 2.6f, 2.2f, 0.75f, "Wheel L", use_of("Wheel Left"), u * 0.12f);
+    box(mx + 0.4f, my + 3.45f, 2.2f, 0.75f, "Wheel R", use_of("Wheel Right"), u * 0.12f);
+    ImGui::Dummy(ImVec2(avail, 6.6f * u));
+}
+
+void BindingsWindow() {
+    const float fs = ImGui::GetFontSize();
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(vp->WorkSize.x * 0.92f, fs * 86.0f), std::min(vp->WorkSize.y * 0.92f, fs * 54.0f)),
+                             ImGuiCond_Appearing);
+    // Black window, dark controls, green for what is selected (the launcher's green, #35d07f).
+    const ImVec4 black(0.02f, 0.02f, 0.025f, 0.98f), panel(0.07f, 0.075f, 0.085f, 1.0f), panel_hi(0.12f, 0.13f, 0.145f, 1.0f),
+                 green(0.208f, 0.816f, 0.498f, 1.0f), green_dim(0.11f, 0.43f, 0.26f, 1.0f), muted(0.62f, 0.64f, 0.69f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, black);
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, black);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.04f, 0.045f, 0.05f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.19f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.18f, 0.19f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, panel);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, panel_hi);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, green_dim);
+    ImGui::PushStyleColor(ImGuiCol_TableRowBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(fs * 1.6f, fs * 1.3f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(fs * 0.7f, fs * 0.55f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fs * 0.7f, fs * 0.38f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, fs * 0.3f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, fs * 0.45f);
+    ImGui::PushStyleVar(ImGuiStyleVar_SeparatorTextPadding, ImVec2(0.0f, fs * 0.35f));
+    bool open = binds_open;
+    const bool visible = ImGui::Begin(TL("Keyboard & mouse bindings###binds", "Teclado e mouse###binds"), &open, ImGuiWindowFlags_NoCollapse);
+    if (visible) {
+        std::string current[kBindCount];
+        for (int i = 0; i < kBindCount; ++i) current[i] = BindingOf(i, 0);
+        ImGui::PushStyleColor(ImGuiCol_Text, binds_capture >= 0 ? green : muted);
+        ImGui::TextWrapped("%s", binds_capture >= 0
+            ? TL("Press a key, click a mouse button or scroll the wheel for the green control. Esc cancels.",
+                 "Aperte uma tecla, clique um botão do mouse ou gire a roda para o controle verde. Esc cancela.")
+            : TL("Click a control, then press the key or mouse button you want for it. Changes apply at once and are saved.",
+                 "Clique um controle e aperte a tecla ou o botão do mouse que quiser. Vale na hora e fica salvo."));
+        ImGui::PopStyleColor();
+        if (*binds_problem) ImGui::TextColored(ImVec4(1.0f, 0.68f, 0.32f, 1.0f), "%s", binds_problem);
+        ImGui::Dummy(ImVec2(0, fs * 0.4f));
+        // One control: its name, then its key on a wide button and a small remove button, in table columns.
+        auto control = [&](int i) {
+            ImGui::PushID(i);
+            ImGui::TableNextRow(0, fs * 2.0f);
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(TL(kBindControls[i].en, kBindControls[i].pt));
+            ImGui::TableNextColumn();
+            const bool waiting = binds_capture == i;
+            if (waiting) {
+                ImGui::PushStyleColor(ImGuiCol_Button, green);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, green);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.02f, 0.06f, 0.03f, 1.0f));
+            }
+            const std::string shown = waiting ? std::string(TL("Press a key...", "Aperte uma tecla..."))
+                                      : current[i].empty() ? std::string(TL("(none)", "(nenhuma)")) : current[i];
+            if (ImGui::Button((shown + "###b").c_str(), ImVec2(-FLT_MIN, 0))) {
+                binds_capture = waiting ? -1 : i;
+                binds_problem = "";
+            }
+            if (waiting) ImGui::PopStyleColor(3);
+            ImGui::TableNextColumn();
+            if (ImGui::Button("x###x", ImVec2(-FLT_MIN, 0))) { SetBinding(i, ""); if (binds_capture == i) binds_capture = -1; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", TL("Remove the key from this control", "Tira a tecla deste controle"));
+            ImGui::PopID();
+        };
+        auto group = [&](const char* title, int first, int count) {
+            ImGui::PushStyleColor(ImGuiCol_Text, green);
+            ImGui::SeparatorText(title);
+            ImGui::PopStyleColor();
+            if (ImGui::BeginTable(title, 3, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 1.05f);
+                ImGui::TableSetupColumn("x", ImGuiTableColumnFlags_WidthFixed, fs * 1.9f);
+                for (int i = first; i < first + count; ++i) control(i);
+                ImGui::EndTable();
+            }
+            ImGui::Dummy(ImVec2(0, fs * 0.5f));
+        };
+        if (ImGui::BeginTable("##bindcols", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX,
+                              ImVec2(0, 0), 0.0f)) {
+            ImGui::TableSetupColumn("left");
+            ImGui::TableSetupColumn("middle");
+            ImGui::TableSetupColumn("right");
+            ImGui::TableNextColumn();
+            group(TL("Left stick (move)", "Analógico esquerdo (andar)"), 0, 4);
+            group(TL("D-pad", "Direcional"), 4, 4);
+            group(TL("Left buttons", "Botões da esquerda"), 8, 3);
+            ImGui::TableNextColumn();
+            group(TL("Menus", "Menus"), 11, 3);
+            // The power wheel shortcuts (keyboard keys; tlg.ini iss_power_key_*).
+            ImGui::PushStyleColor(ImGuiCol_Text, green);
+            ImGui::SeparatorText(TL("Power wheel", "Roda de poderes"));
+            ImGui::PopStyleColor();
+            if (ImGui::BeginTable("##powerkeys", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 1.05f);
+                auto& s = TlgSettings::Get();
+                for (int p = 0; p < 4; ++p) {
+                    ImGui::PushID(100 + p);
+                    ImGui::TableNextRow(0, fs * 2.0f);
+                    ImGui::TableNextColumn();
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(TL(kPowerKeys[p].en, kPowerKeys[p].pt));
+                    ImGui::TableNextColumn();
+                    const bool waiting = binds_capture == kBindCount + p;
+                    if (waiting) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, green);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, green);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.02f, 0.06f, 0.03f, 1.0f));
+                    }
+                    const char* key = SDL_GetScancodeName(SDL_Scancode(s.iss_power_keys[p].load()));
+                    const std::string shown = waiting ? std::string(TL("Press a key...", "Aperte uma tecla..."))
+                                              : key && *key ? std::string(key) : std::string(TL("(none)", "(nenhuma)"));
+                    if (ImGui::Button((shown + "###p").c_str(), ImVec2(-FLT_MIN, 0))) {
+                        binds_capture = waiting ? -1 : kBindCount + p;
+                        binds_problem = "";
+                    }
+                    if (waiting) ImGui::PopStyleColor(3);
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            ImGui::TextColored(muted, "%s", TL("Keyboard keys; hold D-pad Down for the wheel itself.",
+                                               "Teclas do teclado; segure Direcional baixo para a roda."));
+            ImGui::Dummy(ImVec2(0, fs * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, green);
+            ImGui::SeparatorText(TL("Not changed here", "Não mudam aqui"));
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Text, muted);
+            const char* fixed[][2] = {
+                {"F1", TL("this menu", "este menu")}, {"Esc", TL("release the mouse", "soltar o mouse")}, {"F10", "overlay"},
+                {"T / G / Y", TL("graffiti sensor", "sensor do grafite")},
+                {TL("Mouse movement", "Movimento do mouse"), TL("camera", "câmera")},
+                {TL("Left Ctrl / Mouse X1", "Ctrl esq. / Mouse X1"), TL("touchpad mode (hold)", "modo touchpad (segurar)")}};
+            if (ImGui::BeginTable("##fixed", 2, ImGuiTableFlags_SizingFixedFit)) {
+                // A fixed first column wide enough for its longest entry, so the two never overlap.
+                float first = 0.0f;
+                for (const auto& row : fixed) first = std::max(first, ImGui::CalcTextSize(row[0]).x);
+                ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthFixed, first + fs * 1.2f);
+                ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthStretch);
+                for (const auto& row : fixed) {
+                    ImGui::TableNextRow(0, fs * 1.5f);
+                    ImGui::TableNextColumn(); ImGui::TextUnformatted(row[0]);
+                    ImGui::TableNextColumn(); ImGui::TextWrapped("%s", row[1]);
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopStyleColor();
+            ImGui::TableNextColumn();
+            group(TL("Face buttons", "Botões de ação"), 14, 4);
+            group(TL("Right buttons", "Botões da direita"), 18, 3);
+            group(TL("Right stick (camera)", "Analógico direito (câmera)"), 21, 4);
+            ImGui::EndTable();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, green);
+        ImGui::SeparatorText(TL("Your layout", "Seu layout"));
+        ImGui::PopStyleColor();
+        ImGui::TextColored(muted, "%s", TL("Green: a key in use, with what it does. Amber: one key used for two controls.",
+                                           "Verde: tecla em uso, com o que ela faz. Âmbar: uma tecla usada em dois controles."));
+        DrawBindingsKeyboard(current);
+        ImGui::Dummy(ImVec2(0, fs * 0.4f));
+        const float bw = fs * 10.0f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - bw * 2.0f - fs * 0.7f));
+        if (ImGui::Button(TL("Reset to defaults", "Voltar ao padrão"), ImVec2(bw, 0))) {
+            ResetBindings();
+            auto& s = TlgSettings::Get();
+            const int defaults[4] = {SDL_SCANCODE_F5, SDL_SCANCODE_F6, SDL_SCANCODE_F7, SDL_SCANCODE_F8};
+            for (int p = 0; p < 4; ++p) s.iss_power_keys[p] = defaults[p];
+            TlgSettings::Save();
+            binds_capture = -1;
+            binds_problem = "";
+        }
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, green_dim);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.55f, 0.33f, 1.0f));
+        if (ImGui::Button(TL("Done", "Pronto"), ImVec2(bw, 0))) { open = false; }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(6);
+    ImGui::PopStyleColor(9);
+    binds_open = open;
+    if (!open) binds_capture = -1;
+}
+
+extern "C" int runtime_mouse_aim_installed(void);
 void ControlsTab() {
     auto& s = TlgSettings::Get();
     ImGui::SeparatorText(TL("Controller camera", "Camera do controle"));
@@ -643,8 +1157,63 @@ void ControlsTab() {
         ImGui::EndDisabled();
         ImGui::EndTable();
     }
+    {
+        ImGui::SeparatorText(TL("Controller speaker","Alto-falante do controle"));
+        bool speaker=s.iss_pad_speaker;
+        if(ImGui::Checkbox(TL("Play controller-speaker sounds","Tocar sons do alto-falante do controle"),&speaker)){
+            s.iss_pad_speaker=speaker;TlgSettings::Save();
+        }
+        ImGui::TextWrapped(TL("The sounds the game plays through the controller (on the DualSense speaker, or the PC speakers without one). Turning this off mutes only those; game sound and the lightbar are unchanged. Applies at once.",
+            "Os sons que o jogo toca pelo controle (no alto-falante do DualSense, ou nas caixas do PC sem ele). Desligar silencia apenas esses; o som do jogo e a barra de luz continuam. Vale na hora."));
+    }
+#ifdef TLG_RENDERER_V2
+    IssPowerWheelStatus power_status{};runtime_power_wheel_status(&power_status);
+    if(power_status.supported){
+        ImGui::SeparatorText("Power switching test");
+        ImGui::TextWrapped("Switches apply after closing the menu (F1). Every switch carries the current energy percentage and missile count, capped to the new power's capacity. Switching never refills resources.");
+        static const char *names[]={"Smoke","Neon","Video","Concrete"};
+        bool power_enabled=s.iss_power_switch_enabled;
+        if(ImGui::Checkbox("Enable quick power switching",&power_enabled)){
+            s.iss_power_switch_enabled=power_enabled;TlgSettings::Save();
+            if(!power_enabled)runtime_power_wheel_request(-1);
+        }
+        bool instant=s.iss_power_instant;
+        if(ImGui::Checkbox("Switch immediately on stick direction",&instant)){
+            s.iss_power_instant=instant;runtime_power_wheel_request(-1);TlgSettings::Save();
+        }
+        ImGui::TextWrapped(instant?"D-pad Down + a quick stick flick switches immediately. Keep holding to open the wheel; release D-pad Down to confirm its final highlight. Left Smoke, up Neon, right Video, down Concrete.":
+            "Hold D-pad Down for the wheel, choose with the right stick, then release. Hold the stick centered briefly to cancel. A quick tap keeps the normal D-pad action.");
+        float wheel_glow=s.iss_power_glow;
+        if(ImGui::SliderFloat("Wheel glow",&wheel_glow,0.5f,3.0f,"%.2fx")){
+            s.iss_power_glow=wheel_glow;
+        }
+        if(ImGui::IsItemDeactivatedAfterEdit())TlgSettings::Save();
+        ImGui::TextWrapped("With the wheel open, use the right stick, arrow keys or mouse to highlight a power. Keyboard/mouse: hold K (the default D-pad Down binding) to open it.");
+        for(int i=0;i<4;i++){
+            if(i)ImGui::SameLine();
+            ImGui::BeginDisabled(!power_enabled||!power_status.ready||!(power_status.unlocked_mask&(1<<i)));
+            if(ImGui::Button(names[i]))runtime_power_wheel_request(i);
+            ImGui::EndDisabled();
+        }
+        // The shortcut keys are set in the Keyboard & mouse bindings window (Power wheel group).
+        ImGui::Text("Shortcut keys: %s / %s / %s / %s",SDL_GetScancodeName(SDL_Scancode(s.iss_power_keys[0].load())),
+            SDL_GetScancodeName(SDL_Scancode(s.iss_power_keys[1].load())),SDL_GetScancodeName(SDL_Scancode(s.iss_power_keys[2].load())),
+            SDL_GetScancodeName(SDL_Scancode(s.iss_power_keys[3].load())));
+        if(ImGui::Button("Change in Keyboard & mouse bindings...")){binds_open=true;binds_capture=-1;binds_problem="";}
+        if(power_status.error)ImGui::Text("Switching stopped after verification error %d. Reload the copied save.",power_status.error);
+        else if(power_status.pending)ImGui::TextUnformatted("Switch queued for gameplay.");
+    }
+#endif
     // Mouse (src/runtime_pad.c): the camera settings apply at once. The buttons and the touchpad
     // mode are fixed unless TLG_KEY_MAP / TLG_MOUSE_PAD_* (or tlg.ini key_map) change them.
+    ImGui::SeparatorText(TL("Keyboard & mouse bindings", "Teclado e mouse"));
+    if (ImGui::Button(TL("Change keyboard & mouse bindings...", "Mudar teclas e botões do mouse..."))) {
+        binds_open = true;
+        binds_capture = -1;
+        binds_problem = "";
+    }
+    Help(TL("Shows a keyboard and mouse with every control; click one and press the key or button you want.",
+            "Mostra um teclado e um mouse com cada controle; clique um e aperte a tecla ou o botão que quiser."));
     ImGui::SeparatorText(TL("Mouse", "Mouse"));
     if (BeginRows("##mouse")) {
         CheckRow(TL("Mouse turns the camera", "Mouse gira a câmera"), s.mouse_enabled,
@@ -655,14 +1224,8 @@ void ControlsTab() {
                  TL("How far the camera turns for the same mouse movement.", "Quanto a câmera gira para o mesmo movimento do mouse."));
         CheckRow(TL("Invert Y axis", "Inverter eixo Y"), s.mouse_invert_y,
                  TL("Moving the mouse forward looks down.", "Empurrar o mouse para frente olha para baixo."));
-        FloatRow(TL("Smoothing", "Suavização"), s.mouse_smoothing, 0.0f, 0.9f, "%.2f",
-                 TL("Evens out the camera motion; higher values feel softer and a little slower.",
-                    "Deixa o movimento da câmera mais uniforme; valores altos ficam mais suaves e um pouco mais lentos."));
-        FloatRow(TL("Acceleration", "Aceleração"), s.mouse_accel, 0.0f, 2.0f, "%.2f",
-                 TL("Fast movements turn more than slow ones. 0 is linear.", "Movimentos rápidos giram mais que os lentos. 0 é linear."));
-        FloatRow(TL("Anti-dead zone", "Anti-zona morta"), s.mouse_deadzone, 0.0f, 0.5f, "%.2f",
-                 TL("Small mouse movements skip the game's stick dead zone. Raise it if slow movements do nothing.",
-                    "Movimentos pequenos do mouse pulam a zona morta do analógico do jogo. Aumente se movimentos lentos não fizerem nada."));
+        const bool direct_mouse=runtime_mouse_aim_installed()!=0;
+        InfoRow(TL("Camera input", "Entrada da câmera"),direct_mouse?"Direct mouse":"Direct mouse unavailable - see run log");
         ImGui::EndDisabled();
         InfoRow(TL("Left / right / middle", "Esquerdo / direito / do meio"), "R2 / L2 / R3");
         InfoRow(TL("Touchpad mode", "Modo touchpad"), TL("hold Left Ctrl or Mouse X1", "segure Ctrl esquerdo ou botão X1 do mouse"));
@@ -674,6 +1237,13 @@ void ControlsTab() {
         if (!remap.empty()) {
             InfoRow(TL("Remapped", "Remapeado"), remap.c_str());
         }
+        ImGui::EndTable();
+    }
+    ImGui::SeparatorText(TL("Controller", "Controle"));
+    if (BeginRows("##controller")) {
+        CheckRow(TL("Vibration", "Vibração"), s.rumble,
+                 TL("The controller vibrates with the game. Turn it off if you do not want vibration or if it makes the controller misbehave.",
+                    "O controle vibra com o jogo. Desligue se não quiser vibração ou se ela fizer o controle se comportar mal."));
         ImGui::EndTable();
     }
     ImGui::SeparatorText(TL("Sensor mode (graffiti)", "Modo sensor (grafite)"));
@@ -758,29 +1328,155 @@ int RestartChanges() {
            (s.deferred_readback != s.startup_deferred_readback) + (s.stale_readback != s.startup_stale_readback);
 }
 
+#ifdef TLG_RENDERER_V2
+void NativeRenderingTab() {
+    auto& s=TlgSettings::Get();
+    if(const char* test=std::getenv("ISS_NATIVE_LIVE_REBUILD_TEST");test&&!std::strcmp(test,"1")){
+        ImGui::TextWrapped("Diagnostic: rebuild at the CURRENT resolution using the game's own path. This does not apply a new resolution.");
+        int state=runtime_native_live_rebuild_state();ImGui::BeginDisabled(state==1||state==2);
+        if(ImGui::Button("Test current-resolution rebuild"))runtime_native_live_rebuild_request();
+        ImGui::EndDisabled();ImGui::Text("Rebuild check: %s",state==3?"verified":state==2?"rebuilding":state==1?"queued":state<0?"not confirmed":"not run");
+    }
+    const bool live_native=runtime_native_live_enabled()!=0;
+    ImGui::TextWrapped("%s",live_native?"Experimental live native rendering. Select a resolution or release the internal resolution slider to queue a safe rebuild. Larger allocations still require restarting this candidate.":"Experimental native 3D rendering for CUSA00223 update 1.07. Changes apply after closing and relaunching the game.");
+    const char* outputs[]={TL("Off (original game)","Desligado (jogo original)"),"1080p  1920 x 1080","1440p  2560 x 1440",
+        "3440 x 1440 (21:9)","4K  3840 x 2160","5120 x 1440 (32:9)","2560 x 1080 (21:9)","3840 x 1080 (32:9)"};
+    int output=s.iss_native_output, percent=s.iss_native_percent;
+    bool edges=s.iss_native_hud_edges;
+    // Output first; the internal resolution is a scene height (iss_native_pick in
+    // iss_native_resolution.h, the same arithmetic as the launchers), stored as the percent the game reads.
+    bool native_commit=false;
+    if(ImGui::Combo(TL("Output","Saída"),&output,outputs,ISS_NATIVE_PRESETS)){native_commit=true;
+        s.iss_native_percent=percent=iss_native_retarget(s.iss_native_output,percent,output);
+        s.iss_native_output=output;dirty=true;
+    }
+    const int step=output?iss_native_step_for_percent(output,percent):-1;
+    char preview[96];
+    if(!output)std::snprintf(preview,sizeof(preview),"-");
+    else if(step>=0)std::snprintf(preview,sizeof(preview),"%up",iss_native_step_heights[step]);
+    else std::snprintf(preview,sizeof(preview),TL("Custom (%d%%)","Personalizada (%d%%)"),percent);
+    ImGui::BeginDisabled(!output);
+    if(ImGui::BeginCombo(TL("Internal resolution","Resolução interna"),preview)){
+        for(int i=0;i<ISS_NATIVE_STEPS;i++){
+            IssNativePick pick;const int status=iss_native_pick(output,iss_native_step_heights[i],&pick);
+            char label[128];
+            if(status==ISS_NATIVE_PICK_OK)
+                std::snprintf(label,sizeof(label),pick.error?TL("%up  about %u x %u (%d%%)","%up  cerca de %u x %u (%d%%)"):"%up  %u x %u (%d%%)",
+                              iss_native_step_heights[i],pick.width,pick.height,pick.percent);
+            else if(status==ISS_NATIVE_PICK_BUDGET)
+                std::snprintf(label,sizeof(label),TL("%up  over the 4K limit","%up  acima do limite de 4K"),iss_native_step_heights[i]);
+            else std::snprintf(label,sizeof(label),TL("%up  out of range for this output","%up  fora do alcance desta saída"),iss_native_step_heights[i]);
+            ImGui::BeginDisabled(status!=ISS_NATIVE_PICK_OK);
+            if(ImGui::Selectable(label,i==step)){s.iss_native_percent=percent=pick.percent;dirty=true;native_commit=true;}
+            ImGui::EndDisabled();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+    if(ImGui::SliderInt(TL("Custom scale (fine adjustment)","Escala personalizada (ajuste fino)"),&percent,25,200,"%d%%")){s.iss_native_percent=percent;dirty=true;}
+    if(ImGui::IsItemDeactivatedAfterEdit())native_commit=true;
+    if(ImGui::Checkbox("Place HUD at screen edges",&edges)){s.iss_native_hud_edges=edges;dirty=true;native_commit=true;}
+    // Native choices can apply while the overlay stays open. Persist committed edits now: closing the
+    // game directly need not pass through SetOpen(false). Slider drags still write only once, on release.
+    if(native_commit)TlgSettings::Save();
+    if(live_native&&native_commit)
+        runtime_native_live_request_config({output,percent,int(edges),s.iss_native_ui_16_9.load(),0});
+    if(live_native)ImGui::TextWrapped("%s",runtime_native_live_reason());
+    ImGui::TextWrapped("%s",TL("Pick the output (what is shown) and the internal resolution (what the 3D scene is drawn at): for example 720p inside a 1440p output renders less and shows more. The vertical field of view stays the same; wider displays show more world horizontally. Uncheck edge HUD to keep it centered within 16:9.",
+        "Escolha a saída (o que aparece) e a resolução interna (o tamanho em que a cena 3D é desenhada): por exemplo 720p dentro de uma saída 1440p desenha menos e mostra mais. O campo de visão vertical continua o mesmo; telas mais largas mostram mais mundo na horizontal. Desmarque o HUD nas bordas para manter o HUD centralizado em 16:9."));
+    IssNativePlan requested{};
+    const bool requested_valid=output && iss_native_plan({output,percent,int(edges),s.iss_native_ui_16_9.load(),0},&requested);
+    if(!output)ImGui::TextWrapped("%s",TL("Original game rendering. Pick an output to render natively.","Renderização do jogo original. Escolha uma saída para renderizar nativamente."));
+    else if(requested_valid){
+        ImGui::Text(TL("Next launch: scene %u x %u -> output %u x %u (%d%%), %u lighting entries","Próxima partida: cena %u x %u -> saída %u x %u (%d%%), %u entradas de iluminação"),
+                    requested.width,requested.height,requested.output_width,requested.output_height,percent,requested.light_entries);
+        if(step>=0){
+            IssNativePick pick;iss_native_pick(output,iss_native_step_heights[step],&pick);
+            if(pick.error){
+                ImGui::TextWrapped(TL("Not exact: %up is not a whole percent of this output (%+d px). It is exact on:","Não é exato: %up não é um percentual inteiro desta saída (%+d px). É exato em:"),
+                                   iss_native_step_heights[step],int(pick.error));
+                for(int other=1;other<ISS_NATIVE_PRESETS;other++){
+                    IssNativePick exact;
+                    if(other!=output&&iss_native_pick(other,iss_native_step_heights[step],&exact)==ISS_NATIVE_PICK_OK&&!exact.error)
+                        ImGui::BulletText("%s  %d%%",outputs[other],exact.percent);
+                }
+            }
+        }
+    }else ImGui::TextWrapped("%s",TL("This scale is over the 4K pixel limit: the game would refuse it at startup and run unchanged. Pick a lower internal resolution.",
+        "Esta escala passa do limite de pixels de 4K: o jogo a recusaria na partida e abriria sem mudança. Escolha uma resolução interna menor."));
+    ImGui::TextWrapped("%s",TL("Takes effect the next time the game starts.","Vale na próxima vez que o jogo iniciar."));
+    ImGui::Separator();
+    ImGui::TextWrapped("%s",runtime_native_reason());
+    const int exclusive=s.exclusive_status;
+    ImGui::Text("Exclusive presentation: %s",exclusive==2?"acquired":exclusive==1?"waiting for driver / focus":exclusive<0?"unavailable":"off");
+    if(const char* problem=s.exclusive_problem.load())ImGui::TextWrapped("%s",problem);
+    if(runtime_native_status()==1){
+        const auto* p=runtime_native_plan();
+        ImGui::Text("Active scene: %u x %u (%d%%)",p->width,p->height,p->percent);
+        if(live_native && requested_valid && (p->width!=requested.width || p->height!=requested.height)){
+            const int phase=runtime_native_live_rebuild_state();
+            ImGui::TextColored(ImVec4(1.0f,0.75f,0.25f,1.0f),"%s",
+                phase==1||phase==2 ? "Selected size is waiting for its live rebuild." :
+                "Selected size is NOT active. Saved for next launch; restart required or choose a supported size.");
+        }
+    }
+    uint32_t capacity_w{},capacity_h{},capacity_lights{};
+    if(live_native && runtime_native_live_capacity(&capacity_w,&capacity_h,&capacity_lights))
+        ImGui::TextWrapped("Startup allocation: %u x %u, %u lighting entries. Exceeding either dimension or the lighting budget requires restarting.",capacity_w,capacity_h,capacity_lights);
+    ImGui::Text("Presented game image: %d x %d; window: %d x %d",s.image_width.load(),s.image_height.load(),s.window_width.load(),s.window_height.load());
+    ImGui::TextWrapped("Use a matching display resolution and Borderless for native output. Disable external resolution patches. Startup movies and some post-processing still need visual validation.");
+    if(ImGui::BeginTable("native_display",2)){DisplayModeRow();ImGui::EndTable();}
+}
+#endif
+#ifdef TLG_RENDERER_V2
+void PowerWheel(){
+    int open,choice;runtime_power_wheel_visual_status(&open,&choice);
+    IssPowerWheelStatus status{};runtime_power_wheel_status(&status);
+    if(!open||!status.ready||!TlgSettings::Get().iss_power_switch_enabled)return;
+    const auto *v=ImGui::GetMainViewport();
+    const ImVec2 center(v->Pos.x+v->Size.x*0.5f,v->Pos.y+v->Size.y*0.5f);
+    auto *draw=ImGui::GetForegroundDrawList();
+    const float side=std::min(450.0f*base_scale,std::min(v->Size.x,v->Size.y)*0.65f);
+    if(choice>=0&&!(status.unlocked_mask&(1<<choice)))choice=-1;
+    TlgPowerArt::Draw(draw,center,side,choice,ImGui::GetIO().DeltaTime,ImGui::GetTime(),TlgSettings::Get().iss_power_glow);
+    const char *hint=choice<0?"Center: cancel":(status.unlocked_mask&(1<<choice))?"Release to switch":"Locked";
+    ImVec2 text=ImGui::CalcTextSize(hint);
+    draw->AddText(ImVec2(center.x-text.x/2,center.y+side*0.51f),IM_COL32_WHITE,hint);
+}
+#endif
 void Menu() {
     auto& s = TlgSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    static ImVec2 previous_menu_size{};
+    static float previous_menu_scale=0.0f;
+    const bool resized=previous_menu_size.x!=viewport->WorkSize.x ||
+                       previous_menu_size.y!=viewport->WorkSize.y || previous_menu_scale!=base_scale;
+    const ImGuiCond layout_condition=resized ? ImGuiCond_Always : ImGuiCond_Appearing;
+    previous_menu_size=viewport->WorkSize; previous_menu_scale=base_scale;
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                                    viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
-                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                            layout_condition, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(std::min(760.0f * base_scale, viewport->WorkSize.x * 0.95f),
                                     std::min(680.0f * base_scale, viewport->WorkSize.y * 0.9f)),
-                             ImGuiCond_Appearing);
+                             layout_condition);
     bool keep_open = true;
     // tlg: the game's own title (param.sfo), not a fixed one.
     static const std::string heading = [] {
         const std::string_view title = Common::ElfInfo::Instance().Title();
         const char* app_name = std::getenv("TLG_APP_NAME");
         return std::string(!title.empty() ? title : app_name && *app_name ? app_name : "The Last Guardian") +
-               PadText("  (Insert / R3+L2)", "  (Insert / RS+LT)", "  (Insert / RS+ZL)");
+               PadText("  (F1 / R3+L2)", "  (F1 / RS+LT)", "  (F1 / RS+ZL)");
     }();
     if (!ImGui::Begin(heading.c_str(), &keep_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
     footer_help = nullptr;
+#ifdef TLG_RENDERER_V2
+    constexpr int TabCount = 7;
+#else
     constexpr int TabCount = 4;
+#endif
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantTextInput) {
         const int step = ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
@@ -794,7 +1490,11 @@ void Menu() {
     const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() * 2.0f;
     if (ImGui::BeginTabBar("##tabs")) {
         static const char* const tabs[TabCount] = {"Overlay", TL("Image", "Imagem"), TL("Performance", "Desempenho"),
-                                                   TL("Controls", "Controle")};
+                                                   TL("Controls", "Controle")
+#ifdef TLG_RENDERER_V2
+                                                   ,"Karma", "Native rendering", "Trophies"
+#endif
+                                                   };
         for (int tab = 0; tab < TabCount; ++tab) {
             const ImGuiTabItemFlags flags = requested_tab == tab ? ImGuiTabItemFlags_SetSelected : 0;
             if (!ImGui::BeginTabItem(tabs[tab], nullptr, flags)) {
@@ -809,6 +1509,11 @@ void Menu() {
                 case 1: ImageTab(); break;
                 case 2: PerformanceTab(); break;
                 case 3: ControlsTab(); break;
+#ifdef TLG_RENDERER_V2
+                case 4: TlgKarmaMenu(); break;
+                case 5: NativeRenderingTab(); break;
+                case 6: TlgTrophiesMenu(); break;
+#endif
                 default: OverlayTab(); break;
                 }
             }
@@ -1068,8 +1773,8 @@ std::string SaveWhen(s64 mtime) {
         std::snprintf(out, sizeof(out), "%02d/%02d/%04d · %02d:%02d", tm.tm_mday, tm.tm_mon + 1,
                       tm.tm_year + 1900, tm.tm_hour, tm.tm_min);
     } else {
-        static const char* months[] = {"Jan", "Mar", "Apr", "May", "Jun",
-                                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        static const char* const months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
         const int hour = tm.tm_hour % 12 ? tm.tm_hour % 12 : 12;
         std::snprintf(out, sizeof(out), "%s %d, %d · %d:%02d %s", months[tm.tm_mon % 12], tm.tm_mday,
                       tm.tm_year + 1900, hour, tm.tm_min, tm.tm_hour < 12 ? "AM" : "PM");
@@ -1417,8 +2122,8 @@ void GuideBox() {
     std::snprintf(steps[3], sizeof(steps[3]), pt ? "Toque em %s de novo para voltar a andar." : "Tap %s again to walk again.", sticks);
     const char* keys = TL("Keyboard: hold T or G (can sideways), Y shakes, F sprays, the arrow keys aim.",
                           "Teclado: segure T ou G (lata de lado), Y sacode, F pinta, as setas miram.");
-    const char* again = TL("The Insert menu, Controls tab, shows this again.",
-                           "O menu Insert, aba Controle, mostra isto de novo.");
+    const char* again = TL("The F1 menu, Controls tab, shows this again.",
+                           "O menu F1, aba Controle, mostra isto de novo.");
     const float w = 640, pad = 30, inner = w - pad * 2, text_x = pad + 40;
     ImFont* font = ImGui::GetFont();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1468,12 +2173,12 @@ void GuideBox() {
 void OpenGuide() {
     guide_button_rect = ImRect();
     guide_active = true;
-    ImGui::GetIO().MouseDrawCursor = true;
+    overlay_context->IO.MouseDrawCursor = true;
 }
 
 void CloseGuide() {
     guide_active = false;
-    ImGui::GetIO().MouseDrawCursor = menu_open;
+    overlay_context->IO.MouseDrawCursor = menu_open;
     auto& s = TlgSettings::Get();
     if (!s.graffiti_guide_seen.exchange(true)) {
         TlgSettings::Save();
@@ -1658,6 +2363,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     style.FrameRounding = 4.0f;
     style.GrabRounding = 4.0f;
     style.Colors[ImGuiCol_WindowBg].w = 0.92f;
+    base_overlay_style=style;
 
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
@@ -1698,7 +2404,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     }
     overlay_instance = &instance;
     initialized = true;
-    std::printf("Overlay: menu ready (Insert or R3+L2)\n");
+    std::printf("Overlay: menu ready (F1 or R3+L2)\n");
 }
 
 void UpdateTextInput(SDL_Window* window) {
@@ -1799,7 +2505,7 @@ bool HandleGuideEvent(const SDL_Event& event) {
 
 void FinishSaveDialog() {
     RetireChoiceTextures();
-    ImGui::GetIO().MouseDrawCursor = menu_open;
+    overlay_context->IO.MouseDrawCursor = menu_open;
 }
 
 // The save list and messages take the keys, buttons and mouse that answer them; the rest stays
@@ -1897,6 +2603,10 @@ bool HandleEvent(const SDL_Event& event) {
     }
     ImGuiIO& io = overlay_context->IO; // not made current: other threads draw with ImGui
     const bool is_open = menu_open;
+    // A control waiting for a key in the bindings window takes the next key, click or wheel.
+    if (is_open && BindingCaptureEvent(event)) {
+        return true;
+    }
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -1918,8 +2628,9 @@ bool HandleEvent(const SDL_Event& event) {
             return true;
         }
         if (down && !event.key.repeat &&
-            (event.key.key == SDLK_INSERT || (is_open && event.key.key == SDLK_ESCAPE))) {
-            SetOpen(event.key.key == SDLK_INSERT ? !is_open : false);
+            (event.key.key == SDLK_F1 || (is_open && event.key.key == SDLK_ESCAPE))) {
+            // F1 opens/closes the menu (2026-11-06, was Insert); nothing can be bound to it.
+            SetOpen(event.key.key == SDLK_F1 ? !is_open : false);
             return true;
         }
         if (!is_open) {
@@ -2060,7 +2771,14 @@ void SetMousePad(bool active, float x, float y, bool touching, bool clicking) {
 bool Visible() {
     const auto& s = TlgSettings::Get();
     const auto now = std::chrono::steady_clock::now();
-    return initialized && (loading || background_total || menu_open || text_entry_active || choice_active ||
+    bool power_wheel_visible=false,trophy_popup=false;
+#ifdef TLG_RENDERER_V2
+    int wheel_open,wheel_choice;
+    runtime_power_wheel_visual_status(&wheel_open,&wheel_choice);
+    power_wheel_visible=wheel_open&&s.iss_power_switch_enabled;
+    trophy_popup=TlgTrophiesToastActive();
+#endif
+    return initialized && (power_wheel_visible || trophy_popup || loading || background_total || menu_open || text_entry_active || choice_active ||
                            message_active || guide_active || progress_on || now < progress_until || now < toast_until ||
                            NoticeActive() || mouse_pad_on ||
                            choice_retiring || s.show_fps ||
@@ -2198,17 +2916,24 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     std::scoped_lock lock{imgui_mutex};
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
+#ifdef TLG_RENDERER_V2
+    io.MouseDrawCursor = false; // SDL owns the overlay pointer across focus/mode changes
+#endif
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
     // UI scale follows the display height (1080p = 1).
     const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
-        style.ScaleAllSizes(scale / base_scale);
-        style.FontScaleMain = scale;
+        TlgOverlayScale::Apply(style,base_overlay_style,scale);
         base_scale = scale;
     }
 
     UpdateChoiceTextures();
+#ifdef TLG_RENDERER_V2
+    int power_open,power_choice;runtime_power_wheel_visual_status(&power_open,&power_choice);
+    if(power_open)TlgPowerArt::UpdateTexture();
+    if((menu_open && TlgSettings::Get().menu_tab==6) || TlgTrophiesToastActive())TlgTrophiesUpdateTextures();
+#endif
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
     if (loading) {
@@ -2216,12 +2941,18 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (menu_open) {
         Menu();
+        if (binds_open) BindingsWindow();
+    } else {
+        binds_capture = -1;
     }
     if (TlgSettings::Get().show_fps && !menu_open) {
         FpsCounter();
     }
     if (!loading && !menu_open) {
         HealthDisplay();
+#ifdef TLG_RENDERER_V2
+        PowerWheel();
+#endif
     }
     if (background_total && !loading && !menu_open) {
         BackgroundLoading();
@@ -2238,6 +2969,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (mouse_pad_on && !menu_open) {
         MousePadBox();
     }
+#ifdef TLG_RENDERER_V2
+    if (!loading) {
+        TlgTrophiesToast(base_scale);   // trophy earned: icon + name, top right
+    }
+#endif
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{

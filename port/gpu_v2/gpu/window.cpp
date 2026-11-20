@@ -219,31 +219,34 @@ bool WindowSDL::HandleMouse(const SDL_Event& event) {
 }
 
 void WindowSDL::UpdateMouseCapture() {
-    const bool want = TlgSettings::Get().mouse_enabled && focused && !mouse_released &&
-                      !TlgOverlay::CapturesInput();
-    if (want == mouse_captured) {
-        return;
-    }
-    if (!SDL_SetWindowRelativeMouseMode(window, want) && want) {
+    const bool overlay = TlgOverlay::CapturesInput();
+    const bool want = TlgSettings::Get().mouse_enabled && focused && !mouse_released && !overlay;
+    // Fullscreen/focus changes can reset SDL independently of our cached state.
+    if (SDL_GetWindowRelativeMouseMode(window) != want &&
+        !SDL_SetWindowRelativeMouseMode(window, want)) {
         LOG_WARNING(Frontend, "Mouse capture: {}", SDL_GetError());
     }
-    mouse_captured = want;
-    // tlg: the system cursor stays hidden over the game, but Esc gives the pointer back with a
-    // visible cursor so the player can reach other windows; a click captures it again.
-    if (want) {
-        SDL_HideCursor();
-    } else if (mouse_released) {
-        SDL_ShowCursor();
+    // SDL calls stay on the window thread. The overlay uses this native pointer.
+    const bool cursor_visible = overlay || mouse_released || !focused;
+    if (cursor_visible != SDL_CursorVisible()) {
+        if (cursor_visible) SDL_ShowCursor(); else SDL_HideCursor();
     }
-    wheel_x = wheel_y = 0.0f;
-    {
+    if (want != mouse_captured) {
+        mouse_captured = want;
+        wheel_x = wheel_y = 0.0f;
         std::scoped_lock lock{mouse_mutex};
         mouse_state = TlgGpuMouse{};
         mouse_state.captured = want;
+        std::printf("Mouse: %s\n", want ? "captured for the camera and touchpad (Esc releases)" : "released");
     }
-    std::printf("Mouse: %s\n", want ? "captured for the camera and touchpad (Esc releases)"
-                                     : mouse_released ? "released (click in the window to capture)"
-                                                      : "released");
+    // Seed absolute coordinates even if a mode change dropped the first motion event.
+    if (overlay && focused) {
+        SDL_Event motion{};
+        motion.type = SDL_EVENT_MOUSE_MOTION;
+        motion.motion.windowID = SDL_GetWindowID(window);
+        SDL_GetMouseState(&motion.motion.x, &motion.motion.y);
+        TlgOverlay::HandleEvent(motion);
+    }
 }
 
 // TLG_MOUSE_TEST=1: an 8 s loop of synthetic input through the real event path: 2 s right at
@@ -287,22 +290,36 @@ void WindowSDL::MouseTest() {
     }
 }
 
-// Windowed, borderless (desktop-sized, no mode change) or exclusive fullscreen at the desktop
-// mode. Window thread only (SDL). The swapchain follows the size events.
+// Use a monitor-sized window for Vulkan's application-controlled exclusive
+// presentation. Vulkan acquires the display; do not also change its mode in SDL.
 void WindowSDL::ApplyDisplayMode(int mode) {
+    display_transition.store(true,std::memory_order_release);
     display_mode = mode;
     if (mode == TlgGraphics::Windowed) {
         SDL_SetWindowFullscreen(window, false);
     } else {
-        const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(window));
-        const bool exclusive = mode == TlgGraphics::Fullscreen && desktop;
-        if (!SDL_SetWindowFullscreenMode(window, exclusive ? desktop : nullptr)) {
+        if (!SDL_SetWindowFullscreenMode(window, nullptr)) {
             LOG_WARNING(Frontend, "Fullscreen mode: {}", SDL_GetError());
         }
-        SDL_SetWindowFullscreen(window, true);
+        if(!SDL_SetWindowFullscreen(window,true)){
+            LOG_WARNING(Frontend,"Fullscreen request failed: {}",SDL_GetError());
+            mode=TlgGraphics::Windowed;TlgSettings::Get().display_mode=mode;
+        }
     }
     SDL_SyncWindow(window);
-    std::printf("Window: %s\n", TlgGraphics::DisplayModeNames[mode]);
+    SDL_SetWindowAlwaysOnTop(window,mode==TlgGraphics::ExclusiveFullscreen);
+    int pixel_width=0,pixel_height=0;
+    if (SDL_GetWindowSizeInPixels(window,&pixel_width,&pixel_height) && pixel_width>0 && pixel_height>0) {
+        width=pixel_width; height=pixel_height;
+    }
+    UpdateMouseCapture();
+    display_mode=mode;
+    exclusive_requested.store(mode==TlgGraphics::ExclusiveFullscreen,std::memory_order_release);
+    const auto flags=SDL_GetWindowFlags(window);
+    presentation_available.store(!(flags&SDL_WINDOW_MINIMIZED) &&
+        (mode!=TlgGraphics::ExclusiveFullscreen || (flags&SDL_WINDOW_INPUT_FOCUS)),std::memory_order_release);
+    display_transition.store(false,std::memory_order_release);
+    std::printf("Window: %s\n", mode==TlgGraphics::Fullscreen ? "Fullscreen (borderless)" : TlgGraphics::DisplayModeNames[mode]);
 }
 
 WindowSDL::~WindowSDL() {
@@ -381,6 +398,9 @@ bool WindowSDL::PollEvents() {
         }
         if (TlgOverlay::HandleEvent(event) || HandleMouse(event)) {
             if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                std::fprintf(stderr, "PORT_CLOSE_EVENT type=%s (overlay/mouse handled)\n",
+                             event.type == SDL_EVENT_QUIT ? "quit" : "window_close_requested");
+                std::fflush(stderr);
                 is_open = false;
             }
             continue;
@@ -409,14 +429,35 @@ bool WindowSDL::PollEvents() {
             break;
         }
         case SDL_EVENT_QUIT:
-        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED: {
+            // Why the window closes: QUIT alone comes from the console (Ctrl+C/Break), a signal
+            // or the end of the Windows session; CLOSE_REQUESTED from WM_CLOSE (Alt+F4, the title
+            // bar or taskbar, or another program). The window in front tells which program.
+            const auto flags = SDL_GetWindowFlags(window);
+            char front[256] = "?";
+#ifdef _WIN32
+            if (HWND fg = GetForegroundWindow()) {
+                GetWindowTextA(fg, front, sizeof(front));
+            }
+#endif
+            std::fprintf(stderr, "PORT_CLOSE_EVENT type=%s mod=0x%x focused=%d front=\"%s\"\n",
+                         event.type == SDL_EVENT_QUIT ? "quit" : "window_close_requested",
+                         unsigned(SDL_GetModState()), (flags & SDL_WINDOW_INPUT_FOCUS) ? 1 : 0,
+                         front);
+            std::fflush(stderr);
             is_open = false;
             break;
+        }
         default:
             break;
         }
     }
     UpdateMouseCapture();
+    const auto flags=SDL_GetWindowFlags(window);
+    presentation_available.store(!(flags&SDL_WINDOW_MINIMIZED) && GetWidth()>0 && GetHeight()>0 &&
+        (!WantsExclusive() || (flags&SDL_WINDOW_INPUT_FOCUS)),std::memory_order_release);
+    const bool on_top=WantsExclusive() && (flags&SDL_WINDOW_INPUT_FOCUS);
+    if(on_top!=bool(flags&SDL_WINDOW_ALWAYS_ON_TOP))SDL_SetWindowAlwaysOnTop(window,on_top);
     return is_open;
 }
 

@@ -46,6 +46,8 @@ def platform_key(nt=None):
 
 def package_folder(asset_name):
     """The top folder inside the archive: the asset name without .tar.gz / .zip."""
+    if re.fullmatch(r'infamous-windows-x86_64-sunny-beta(?:-\d{2}-\d{2})?\.zip', asset_name):
+        return 'infamous-windows-x86_64'
     return re.sub(r'(\.tar\.gz|\.tgz|\.zip)$', '', asset_name)
 
 
@@ -54,12 +56,19 @@ def pick_assets(release, nt=None):
     this platform. Raises UpdateError('noasset') when the release has no package for it."""
     assets = {a.get('name'): a for a in (release or {}).get('assets') or [] if isinstance(a, dict)}
     package = assets.get(ASSET_NAMES[platform_key(nt)])
-    prefix = (UPSTREAM_PREFIX if (release or {}).get('beta') and (release or {}).get('source') == 'upstream'
+    sunny = (release or {}).get('beta') and (release or {}).get('source') == 'sunny'
+    if sunny and platform_key(nt) == 'windows':
+        candidates = [a for name, a in assets.items() if isinstance(name, str) and
+                      re.fullmatch(r'infamous-windows-x86_64-sunny-beta(?:-\d{2}-\d{2})?\.zip', name)]
+        package = candidates[0] if len(candidates) == 1 else None
+    prefix = (UPSTREAM_PREFIX if (release or {}).get('beta') and (release or {}).get('source') in ('upstream', 'sunny')
               else RELEASE_PREFIX) + 'download/'
     trusted = lambda asset: isinstance(asset.get('url'), str) and asset['url'].startswith(prefix)
     if not package or not trusted(package) or not package.get('size'):
         raise UpdateError('noasset', ASSET_NAMES[platform_key(nt)])
-    sums = assets.get(SUMS_NAME)
+    sums = assets.get('SHA256SUMS.txt' if sunny else SUMS_NAME)
+    if sunny and (not sums or not trusted(sums)):
+        raise UpdateError('checksum', 'Sunny beta checksum list is missing')
     return package, (sums if sums and trusted(sums) else None)
 
 
