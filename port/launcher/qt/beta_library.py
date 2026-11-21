@@ -164,7 +164,7 @@ def launch(root, tag, shared_data, session_log, env=None, options=None, popen=su
     with update_install.install_lock(root, '.iss-beta.lock'):
         if session_running(root, tag):
             raise update_install.InstallError('busy', 'Beta is already running')
-        if data['release'].get('source') == 'upstream':
+        if data['release'].get('source') in ('upstream', 'sunny'):
             # Upstream's existing --play role receives a real inherited output handle.
             # The original package is neither injected with scripts nor patched.
             environment.pop('ISS_BETA_SESSION_LOG', None)

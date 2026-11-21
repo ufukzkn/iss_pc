@@ -488,6 +488,10 @@ u32 ConsumeWithOverlaysScreenshotRequests() { return 0; }
 ScreenshotRequests ConsumeScreenshotRequests() { return {}; }
 } // namespace VideoCore
 
+// V1 has no screenshot consumer. Keep the shared diagnostic entry point linkable;
+// renderer V2 supplies its real capture queue in gpu_v2/gpu/bridge.cpp.
+extern "C" void tlggpu_request_screenshot(void) {}
+
 extern "C" int tlggpu_cpu_write(void* dst, const void* src, int fill, uint64_t size) {
     auto* rasterizer = Core::Memory::Instance()->GetRasterizer();
     return rasterizer && rasterizer->GetBufferCache().CpuWriteMerge(
