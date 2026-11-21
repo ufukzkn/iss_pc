@@ -64,6 +64,48 @@ def list_installed(root):
     return sorted(result, key=lambda r: (r['release'].get('timestamp', ''), r['release']['tag']), reverse=True)
 
 
+def normalize_sunny_templates(stage):
+    """Verify the vendor manifest, then keep shipped user examples outside shared data."""
+    stage = Path(stage).resolve()
+    manifest = update_install._read(stage / update_install.MANIFEST)
+    allowed = {'user/mods.json', 'user/mods/iss_godmode.xml', 'user/mods/iss_infinite_energy.xml',
+               'user/mods/iss_video_dash_endless.xml', 'user/dlc/PUT-YOUR-DLC-HERE.txt',
+               'user/first-light/dlc/PUT-YOUR-DLC-HERE.txt'}
+    entries = manifest.get('files')
+    if manifest.get('schema') != 1 or not isinstance(entries, list):
+        raise UpdateError('archive', 'Invalid Sunny manifest')
+    seen = set()
+    for row in entries:
+        name = row.get('path')
+        if name not in allowed:
+            update_install._relative(name)
+        if name in seen:
+            raise UpdateError('archive', 'Duplicate Sunny file')
+        seen.add(name)
+        path = stage / name
+        if path.is_symlink() or not path.is_file() or path.resolve().is_relative_to(stage) is False:
+            raise UpdateError('archive', str(name))
+        if path.stat().st_size != row.get('size') or update_install._hash(path) != row.get('sha256'):
+            raise UpdateError('checksum', name)
+    actual = {p.relative_to(stage).as_posix() for p in stage.rglob('*') if p.is_file()
+              and p.name != update_install.MANIFEST}
+    if actual != seen:
+        raise UpdateError('archive', 'Unlisted Sunny files')
+    for name in seen & allowed:
+        source = stage / name
+        dest = stage / 'optional-mods' / ('sunny-' + name.replace('/', '-'))
+        dest.parent.mkdir(exist_ok=True)
+        if dest.exists():
+            raise UpdateError('archive', 'Duplicate Sunny template')
+        source.replace(dest)
+    user = stage / 'user'
+    if user.exists():
+        if user.is_symlink() or user.resolve().parent != stage or any(p.is_file() for p in user.rglob('*')):
+            raise UpdateError('archive', 'Unexpected Sunny user data')
+        shutil.rmtree(user)
+    update_install.write_manifest(stage, manifest['version'])
+
+
 def install(archive, root, release, exe, progress=None):
     """Extract and verify before registering the beta. An existing version is reused."""
     root = Path(root)
@@ -79,6 +121,8 @@ def install(archive, root, release, exe, progress=None):
         work = Path(tempfile.mkdtemp(prefix='.partial-', dir=root))
         try:
             stage = updater.extract(archive, work / 'payload', updater.package_folder(Path(archive).name), progress)
+            if release.get('source') == 'sunny':
+                normalize_sunny_templates(stage)
             manifest, entries = update_install._check_payload(stage, progress=progress)
             package_version = (stage / 'VERSION').read_text(encoding='utf-8').strip()
             matches = package_version == release['tag']

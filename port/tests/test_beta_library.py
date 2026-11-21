@@ -82,6 +82,23 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(library.list_installed(self.betas), [])
         self.assertFalse(library.folder(self.betas, self.tag).exists())
 
+    def test_sunny_shipped_mod_selection_never_replaces_player_data(self):
+        stage = self.root/'sunny-vendor'
+        (stage/'user/mods').mkdir(parents=True)
+        (stage/'VERSION').write_text('v2026.10.28-3722737')
+        (stage/'launcher.exe').write_text('vendor')
+        (stage/'user/mods.json').write_text('{"enabled": ["vendor"]}')
+        (stage/'user/mods/iss_godmode.xml').write_text('<fixture/>')
+        files = [{'path': p.relative_to(stage).as_posix(), 'size': p.stat().st_size,
+                  'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+                 for p in stage.rglob('*') if p.is_file()]
+        (stage/'package-files.json').write_text(json.dumps({'schema':1, 'version':'v2026.10.28-3722737','files':files}))
+        library.normalize_sunny_templates(stage)
+        self.assertFalse((stage/'user').exists())
+        self.assertTrue((stage/'optional-mods/sunny-user-mods-iss_godmode.xml').is_file())
+        update_install._check_payload(stage)
+        self.assertEqual((self.user/'save.dat').read_text(), 'save')
+
     def test_version_mismatch_is_not_installed(self):
         wrong = self.package('beta-2026.10.24-abcdef2')
         with self.assertRaises(UpdateError):
