@@ -376,7 +376,7 @@ class Updates(QObject):
     @Slot()
     def download(self):
         url = (self.release or {}).get('url') or releases.RELEASES_URL
-        prefix = releases.UPSTREAM_PREFIX if self.betaSelected and (self.release or {}).get('source') == 'upstream' else releases.RELEASE_PREFIX
+        prefix = releases.UPSTREAM_PREFIX if self.betaSelected and (self.release or {}).get('source') in ('upstream', 'sunny') else releases.RELEASE_PREFIX
         if not url.startswith(prefix):
             url = releases.RELEASES_URL
         if 'open_url' in self.probes:
